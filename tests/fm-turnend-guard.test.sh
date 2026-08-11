@@ -533,14 +533,14 @@ test_hook_silent_without_stdin() {
 }
 
 test_hook_runs_fast() {
-  local dir start elapsed_s best_s attempt
+  local dir start elapsed_s best_s
   dir=$(make_primary_dir "$TMP_ROOT/hook-timing")
   : > "$dir/state/task1.meta"
   # The property under test is the hook's intrinsic speed, not the host's
   # scheduling: $SECONDS has whole-second granularity and a loaded CI box can
   # stall any single run, so take the best of three samples before judging.
   best_s=""
-  for attempt in 1 2 3; do
+  for _ in 1 2 3; do
     start=$SECONDS
     run_hook "$dir" false >/dev/null
     elapsed_s=$((SECONDS - start))
