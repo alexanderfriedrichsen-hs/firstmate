@@ -57,7 +57,8 @@ Each degrades gracefully: a missing source is silently skipped, never an error.
    [ -n "$f" ] && head -1 "$f" | jq -r '.payload.cwd'
    ```
 
-   EXCLUDE fleet-driven sessions so the bullets only reflect the captain's own hands-on work, by BOTH rules: drop any prompt whose text starts with the `[fm-from-firstmate]` marker, and drop any session whose `cwd` is inside a treehouse or firstmate worktree (for example under `~/.treehouse/` or this firstmate home).
+   EXCLUDE fleet-driven sessions so the bullets only reflect the captain's own hands-on work, by BOTH rules: drop any prompt whose text starts with the `[fm-from-firstmate]` marker, and drop any session whose `cwd` is a disposable agent worktree rather than a personal checkout - for example under `~/.treehouse/`, this firstmate home or any secondmate home, a no-mistakes gate worktree under `~/.no-mistakes/worktrees/`, or an Orca-managed worktree.
+   When in doubt about a `cwd`, leave the session out rather than misattribute agent work as the captain's own.
    Summarize the captain's own sessions from the prompt texts; open a rollout transcript only when a prompt alone is too thin to name the work.
 
 5. **The captain's own git commits.**
