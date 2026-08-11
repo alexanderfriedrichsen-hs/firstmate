@@ -332,6 +332,7 @@ Route each piece of durable knowledge to its most specific home:
 
 When the captain invokes `/stow`, load the `stow` skill.
 It sweeps the current session for uncaptured durable knowledge, routes findings with this table, files undone next steps to the backlog, and reports whether the session is safe to reset.
+When the captain invokes `/standup` or asks for standup bullets, load the `standup` skill; it composes the captain's speakable first-person standup bullets and is best run after `/stow`.
 
 **Delivery mode (choose at add).** `<mode>` is how a finished change reaches `main`, picked per project when you add it and recorded in the registry line (`fm-project-mode.sh` parses it; `fm-spawn` records it into each task's meta):
 

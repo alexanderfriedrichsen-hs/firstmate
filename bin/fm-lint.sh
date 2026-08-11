@@ -51,14 +51,23 @@ if [ "${1:-}" = "--required-version" ]; then
   exit 0
 fi
 
-# Enforce the pin so local and CI resolve the identical rule set.
+# Enforce the pin so local and CI resolve the identical rule set. When PATH has
+# no shellcheck, fall back to a repo-local pinned install (the destination
+# fm-install-shellcheck.sh provisions); the version assertion below still runs
+# against it, so the parity contract is unchanged.
+SHELLCHECK_BIN=shellcheck
 if ! command -v shellcheck >/dev/null 2>&1; then
-  printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s for CI parity.\n' \
-    "$REQUIRED_SHELLCHECK" >&2
-  exit 127
+  LOCAL_PIN="$ROOT/.no-mistakes/tools/shellcheck-v${REQUIRED_SHELLCHECK}/shellcheck"
+  if [ -x "$LOCAL_PIN" ]; then
+    SHELLCHECK_BIN="$LOCAL_PIN"
+  else
+    printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s for CI parity.\n' \
+      "$REQUIRED_SHELLCHECK" >&2
+    exit 127
+  fi
 fi
 unset SHELLCHECK_OPTS
-resolved=$(shellcheck --version | awk '/^version:/ {print $2; exit}')
+resolved=$("$SHELLCHECK_BIN" --version | awk '/^version:/ {print $2; exit}')
 # Log the resolved version to stderr so both CI and local runs record it.
 printf 'fm-lint.sh: ShellCheck %s (pinned %s)\n' "$resolved" "$REQUIRED_SHELLCHECK" >&2
 if [ "$resolved" != "$REQUIRED_SHELLCHECK" ]; then
@@ -68,9 +77,9 @@ if [ "$resolved" != "$REQUIRED_SHELLCHECK" ]; then
 fi
 
 if [ "$#" -gt 0 ]; then
-  exec shellcheck --norc "$@"
+  exec "$SHELLCHECK_BIN" --norc "$@"
 fi
 
 # Canonical file set: the ONE authoritative definition. Callers reference this
 # script; they never re-spell these globs.
-exec shellcheck --norc bin/*.sh bin/backends/*.sh tests/*.sh
+exec "$SHELLCHECK_BIN" --norc bin/*.sh bin/backends/*.sh tests/*.sh
