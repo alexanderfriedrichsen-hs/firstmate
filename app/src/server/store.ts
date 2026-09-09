@@ -36,6 +36,17 @@ export class Store {
       fileMustExist: readonly,
     });
     if (readonly) return;
+    if (
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'",
+        )
+        .get() &&
+      this.setting("ownershipReleased")
+    ) {
+      this.db.pragma("query_only = ON");
+      return;
+    }
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = FULL");
     this.db.pragma("foreign_keys = ON");
@@ -122,10 +133,14 @@ export class Store {
       );
   }
   setting(key: string, value?: unknown): any {
-    if (value !== undefined)
+    if (value !== undefined) {
+      this.assertWritable();
       this.db
         .prepare("INSERT OR REPLACE INTO settings VALUES(?,?)")
         .run(key, JSON.stringify(value));
+      if (key === "ownershipReleased" && value)
+        this.db.pragma("query_only = ON");
+    }
     return json(
       (
         this.db
@@ -142,7 +157,88 @@ export class Store {
     })();
     return this.generation;
   }
+  assertWritable() {
+    if (this.setting("ownershipReleased"))
+      throw new Conflict(
+        "App ownership was released; this history is read-only",
+      );
+  }
+  externallyManaged(ticketId: string) {
+    return this.setting("legacy:" + ticketId)?.management === "external";
+  }
+  adoptionEligibility(t: Ticket) {
+    const legacy = this.setting("legacy:" + t.id);
+    if (
+      legacy?.management !== "external" ||
+      !["queued", "backlog"].includes(t.status) ||
+      t.handling !== "agent_managed"
+    )
+      return {
+        eligible: false,
+        reason: "Only a queued externally managed ticket can be adopted",
+      };
+    if (!this.setting("project")?.source)
+      return {
+        eligible: false,
+        reason: "Configure a project source before adopting queued work",
+      };
+    if (this.setting("migration-conflict:" + t.id))
+      return {
+        eligible: false,
+        reason:
+          "Resolve conflicting legacy updates before adopting this ticket",
+      };
+    const descriptive = new Set([
+      "kind",
+      "title",
+      "description",
+      "priority",
+      "created_at",
+      "createdAt",
+    ]);
+    if (
+      Object.entries(legacy.metadata ?? {}).some(
+        ([key, value]) =>
+          !descriptive.has(key) &&
+          value !== null &&
+          value !== undefined &&
+          String(value).trim() !== "",
+      ) ||
+      legacy.statusHistory?.trim() ||
+      legacy.holds?.length ||
+      this.attempts(t.id).length ||
+      this.conversations({ kind: "user", id: "adoption" }).some(
+        (entry) => entry.ticketId === t.id,
+      )
+    )
+      return {
+        eligible: false,
+        reason:
+          "Legacy worker identity or history requires reconciliation; adoption is blocked",
+      };
+    return {
+      eligible: true,
+      reason:
+        "Adopt this queued task into the configured project; automatic work follows your dispatch and Firstmate control settings",
+    };
+  }
+  assertLeaseActive(conversationId: string) {
+    if (
+      this.setting("lease-retirement-intent:conversation:" + conversationId) ||
+      this.setting("retired-lease:conversation:" + conversationId)
+    )
+      throw new Conflict(
+        "Conversation lease retirement is recorded; preserve history and reconcile before any further input",
+      );
+  }
+  assertManaged(ticketId: string) {
+    if (this.externallyManaged(ticketId))
+      throw new Conflict(
+        "Legacy ticket is externally managed; no app worker can dispatch",
+      );
+  }
   assertOwner() {
+    this.assertWritable();
     if (this.generation !== this.setting("generation"))
       throw new Conflict("Stale runtime generation");
   }
@@ -174,6 +270,7 @@ export class Store {
       );
   }
   putTicket(t: Ticket) {
+    this.assertWritable();
     this.db
       .prepare(
         "INSERT INTO tickets VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET handling=excluded.handling,data=excluded.data",
@@ -191,6 +288,7 @@ export class Store {
     return c;
   }
   putConversation(c: Conversation) {
+    this.assertWritable();
     this.db
       .prepare(
         "INSERT INTO conversations VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -210,6 +308,7 @@ export class Store {
       });
   }
   putAttempt(a: Attempt) {
+    this.assertWritable();
     this.db
       .prepare(
         "INSERT INTO attempts VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -224,6 +323,7 @@ export class Store {
     ).map((r) => json(r.data));
   }
   event(type: string, id: string, payload: unknown, ticketId?: string) {
+    this.assertWritable();
     const eventId = randomUUID();
     const r = this.db
       .prepare(
@@ -258,6 +358,7 @@ export class Store {
     }));
   }
   outbox(c: Command, kind: string, target: string, payload: unknown) {
+    this.assertWritable();
     this.db
       .prepare(
         "INSERT INTO outbox(id,command_id,kind,target_id,payload,created_at) VALUES(?,?,?,?,?,?)",
@@ -416,6 +517,7 @@ export class Store {
         throw new Error("Worker requires a ticket");
       if (v.ticketId) {
         const t = this.ticket(v.ticketId, actor);
+        this.assertManaged(t.id);
         if (t.handling === "human_only")
           throw new Conflict("Human only tickets cannot launch a conversation");
         for (const edge of this.db
@@ -445,7 +547,7 @@ export class Store {
       )
         throw new Conflict("One Firstmate already exists");
       const project = this.setting("project");
-      if (!project?.source)
+      if (v.role === "worker" && !project?.source)
         throw new Conflict("Configure a project source first");
       const conv: Conversation = {
         ...v,
@@ -465,6 +567,8 @@ export class Store {
     }
     if (c.type.startsWith("conversation.") || c.type === "permission.reply") {
       const conv = this.conversation(c.targetId!, actor);
+      this.assertLeaseActive(conv.id);
+      if (conv.ticketId) this.assertManaged(conv.ticketId);
       if (c.expectedVersion !== conv.version)
         throw new Conflict("Conversation changed; refresh before retrying");
       if (conv.retiredAt)
@@ -699,7 +803,41 @@ export class Store {
         ["completed", "cancelled"].includes(t.status))
     )
       throw new Conflict("Ticket is not eligible for managed execution");
-    if (c.type === "ticket.dependencies") {
+    if (
+      this.externallyManaged(t.id) &&
+      ![
+        "ticket.adopt",
+        "ticket.update",
+        "ticket.complete",
+        "ticket.cancel",
+        "ticket.reopen",
+        "ticket.dependencies",
+      ].includes(c.type)
+    )
+      this.assertManaged(t.id);
+    if (this.externallyManaged(t.id)) user();
+    if (c.type === "ticket.adopt") {
+      user();
+      const eligibility = this.adoptionEligibility(t);
+      if (!eligibility.eligible) throw new Conflict(eligibility.reason);
+      const legacy = this.setting("legacy:" + t.id);
+      this.setting("legacy:" + t.id, {
+        ...legacy,
+        management: "app",
+        adoptedAt: now(),
+        adoptedBy: actor.id,
+      });
+      t.status = "queued";
+      this.db
+        .prepare("INSERT INTO wakes VALUES(?,?,?,?,?)")
+        .run(
+          "adopt:" + c.commandId,
+          t.id,
+          "pending",
+          JSON.stringify({ kind: "ticket.adopted", ticketId: t.id }),
+          now(),
+        );
+    } else if (c.type === "ticket.dependencies") {
       if (actor.kind === "worker") throw new Denied("Resource not found");
       const ids = z.array(z.string().uuid()).parse(p.requires);
       for (const id of ids) {
@@ -1221,6 +1359,7 @@ export class Store {
     kind: string,
     providerId?: string,
   ) {
+    this.assertWritable();
     this.db
       .prepare(
         `INSERT INTO messages(id,conversation_id,role,content,kind,provider_id,sequence,created_at) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM messages WHERE conversation_id=?),?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,version=messages.version+1`,
@@ -1256,6 +1395,8 @@ export class Store {
           .all(id) as any[]
       ).map((r) => ({ id: r.id, ...json(r.data) })),
       legacy: this.setting("legacy:" + id),
+      adoption:
+        actor.kind === "user" ? this.adoptionEligibility(ticket) : undefined,
       evidence: this.evidence(id),
       revisionFacts: this.setting("revision:" + ticket.revision),
       ciConfiguration: {
@@ -1284,6 +1425,7 @@ export class Store {
     media = "text/plain",
     conversationId?: string,
   ) {
+    this.assertWritable();
     const id = createHash("sha256").update(content).digest("hex");
     const dir = path.join(this.home, "app", "objects");
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

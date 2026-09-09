@@ -14,8 +14,14 @@ import {
   rollbackExport,
   prepareCutover,
   executeCutover,
+  recoverCutover,
+  abortCutover,
+  prepareRollback,
+  executeRollback,
 } from "./migration.ts";
-const help = `Firstmate localhost application\n\nFM_HOME must be an explicit isolated absolute path.\n\nCommands:\n  setup --source <non-live clone> [--port 43170] [--required-checks name,name]\n  start                         Start the runtime in the foreground\n  status                        Show local runtime and tickets\n  stop                          Stop runtime; preserve provider runners\n  pause --paused <true|false>    Change automatic dispatch state\n  reconcile                     Read runner identities and pending effects\n  backup --output <path>         Create a consistent SQLite backup\n  import --source <legacy copy>  Import a read-only legacy copy\n  rollback --output <directory>  Export current managed and user-only history\n  cutover --source <home>        Prepare a read-only transfer report\n    --approve-report <id>       Execute that explicitly approved fresh report\n  read [--resource snapshot|wakes|tickets/<id>]  Read scoped agent state\n  command --file <json> --token-file <path>  Submit an agent command\n\nOptions: --help, --json, --home <path>, --transferred-home.\n--transferred-home requires a complete ownership receipt for the live home.\nUnknown options fail.\n\nExamples:\n  FM_HOME=/absolute/test-home npm run app -- setup --source /absolute/source\n  FM_HOME=/absolute/test-home npm start\n  FM_HOME=/absolute/test-home npm run app -- status --json`;
+import { prepareFenceInstall, executeFenceInstall } from "./fence-install.ts";
+import { prepareLeaseRetirement, executeLeaseRetirement } from "./leases.ts";
+const help = `Firstmate localhost application\n\nFM_HOME must be an explicit isolated absolute path.\n\nCommands:\n  setup --source <non-live clone> [--port 43170] [--required-checks name,name]\n  start                         Start the runtime in the foreground\n  status                        Show local runtime and tickets\n  stop                          Stop runtime; preserve provider runners\n  pause --paused <true|false>    Change automatic dispatch state\n  reconcile                     Read runner identities and pending effects\n  backup --output <path>         Create a consistent SQLite backup\n  import --source <legacy copy>  Import a read-only legacy copy\n  rollback --output <directory>  Export current managed and user-only history\n    --release-ownership         Prepare rollback report; approve separately\n    --approve-report <id>       Export and release app ownership\n  fence-install --source <home> Prepare reviewed legacy entrypoint installation\n    --approve-report <id>       Install the exact approved snapshot\n  lease-retire --kind <conversation|check> --target-id <id>\n    --landed-ref <ref>          Require HEAD landed on the recorded main ref\n    --scratch-artifact <id> --reason <text>  Preserve unlanded scratch evidence\n    --approve-report <id>       Return the inspected lease, without force\n  cutover --source <home>        Prepare a read-only transfer report\n    --approve-report <id>       Execute that explicitly approved fresh report\n    --recover --approve-report <id>  Complete an interrupted transfer\n  cutover-abort --approve-report <id>  Release an unchanged incomplete transfer\n  read [--resource snapshot|wakes|tickets/<id>]  Read scoped agent state\n  command --file <json> --token-file <path>  Submit an agent command\n\nOptions: --help, --json, --home <path>, --transferred-home.\n--transferred-home requires a complete ownership receipt for the live home.\nUnknown options fail.\n\nExamples:\n  FM_HOME=/absolute/test-home npm run app -- setup --source /absolute/source\n  FM_HOME=/absolute/test-home npm start\n  FM_HOME=/absolute/test-home npm run app -- status --json`;
 const jsonRequested = process.argv.includes("--json");
 try {
   const { values, positionals } = parseArgs({
@@ -29,6 +35,13 @@ try {
       "required-checks": { type: "string" },
       "approve-report": { type: "string" },
       "transferred-home": { type: "boolean" },
+      "release-ownership": { type: "boolean" },
+      recover: { type: "boolean" },
+      kind: { type: "string" },
+      "target-id": { type: "string" },
+      "landed-ref": { type: "string" },
+      "scratch-artifact": { type: "string" },
+      reason: { type: "string" },
       output: { type: "string" },
       paused: { type: "string" },
       file: { type: "string" },
@@ -52,8 +65,18 @@ try {
     reconcile: [],
     backup: ["output"],
     import: ["source"],
-    rollback: ["output"],
-    cutover: ["source", "approve-report"],
+    rollback: ["output", "release-ownership", "approve-report"],
+    cutover: ["source", "approve-report", "recover"],
+    "cutover-abort": ["approve-report"],
+    "fence-install": ["source", "approve-report"],
+    "lease-retire": [
+      "kind",
+      "target-id",
+      "landed-ref",
+      "scratch-artifact",
+      "reason",
+      "approve-report",
+    ],
     command: ["file", "token-file"],
     read: ["resource", "token-file"],
   };
@@ -73,6 +96,13 @@ try {
     );
   const home = homePath(values.home, {
     allowTransferred: values["transferred-home"],
+    allowReleasedRecovery:
+      ["status", "reconcile", "backup"].includes(command) ||
+      (command === "rollback" &&
+        !!values["release-ownership"] &&
+        !!values["approve-report"]),
+    rollbackReportId:
+      command === "rollback" ? values["approve-report"] : undefined,
   });
   const print = (data: any) =>
     console.log(values.json ? JSON.stringify(data) : encode(data));
@@ -183,14 +213,34 @@ try {
   }
   const release = ownHome(home);
   const store = new Store(home);
-  if (store.setting("transferDestination"))
+  const migrationCommand = [
+    "cutover",
+    "cutover-abort",
+    "fence-install",
+    "rollback",
+  ].includes(command);
+  if (
+    store.setting("ownershipReleased") &&
+    !(
+      command === "rollback" &&
+      values["release-ownership"] &&
+      values["approve-report"]
+    )
+  )
+    throw new Error(
+      "App ownership was released; only retained-history reads and approved rollback recovery are allowed",
+    );
+  if (store.setting("transferDestination") && !migrationCommand)
     throw new Error(
       "This staging home transferred ownership to " +
         store.setting("transferDestination") +
         "; use it only for retained history",
     );
-  store.fence();
-  if (!fs.existsSync(path.join(home, "app", "control-mode")))
+  if (!store.setting("ownershipReleased")) store.fence();
+  if (
+    !migrationCommand &&
+    !fs.existsSync(path.join(home, "app", "control-mode"))
+  )
     atomic(
       path.join(home, "app", "control-mode"),
       JSON.stringify({
@@ -278,13 +328,41 @@ try {
     await store.backup(path.resolve(values.output));
     print({ backup: path.resolve(values.output) });
   } else if (command === "rollback") {
-    if (!values.output) throw new Error("--output is required");
-    print(await rollbackExport(store, path.resolve(values.output)));
+    if (values["approve-report"] && !values["release-ownership"])
+      throw new Error("--approve-report requires --release-ownership");
+    if (values["release-ownership"]) {
+      if (values["approve-report"]) {
+        const report = store.setting(
+          "rollbackReport:" + values["approve-report"],
+        );
+        if (!report)
+          throw new Error("Prepare and review a rollback report first");
+        print(
+          await executeRollback(store, report, values["approve-report"], {
+            ownershipHeld: true,
+          }),
+        );
+      } else {
+        if (!values.output) throw new Error("--output is required");
+        print(prepareRollback(store, path.resolve(values.output)));
+      }
+    } else {
+      if (!values.output) throw new Error("--output is required");
+      print(await rollbackExport(store, path.resolve(values.output)));
+    }
   } else if (command === "cutover") {
+    if (values.recover && !values["approve-report"])
+      throw new Error("--recover requires --approve-report");
     if (values["approve-report"]) {
       const report = store.setting("cutoverReport:" + values["approve-report"]);
       if (!report) throw new Error("Prepare and review a cutover report first");
-      print(await executeCutover(store, report, values["approve-report"]));
+      print(
+        await (values.recover ? recoverCutover : executeCutover)(
+          store,
+          report,
+          values["approve-report"],
+        ),
+      );
     } else {
       if (!values.source)
         throw new Error("--source is required to prepare a cutover report");
@@ -295,6 +373,62 @@ try {
           fileURLToPath(new URL("../../../", import.meta.url)),
         ),
       );
+    }
+  } else if (command === "cutover-abort") {
+    if (!values["approve-report"])
+      throw new Error("--approve-report is required");
+    const report = store.setting("cutoverReport:" + values["approve-report"]);
+    if (!report) throw new Error("Prepare and review a cutover report first");
+    print(await abortCutover(store, report, values["approve-report"]));
+  } else if (command === "fence-install") {
+    if (values["approve-report"]) {
+      const report = store.setting(
+        "fenceInstallReport:" + values["approve-report"],
+      );
+      if (!report)
+        throw new Error("Prepare and review a fence installation report first");
+      print(executeFenceInstall(report, values["approve-report"]));
+    } else {
+      if (!values.source) throw new Error("--source is required");
+      const report = prepareFenceInstall(
+        values.source,
+        fileURLToPath(new URL("../../../", import.meta.url)),
+      );
+      store.setting("fenceInstallReport:" + report.id, report);
+      print(report);
+    }
+  } else if (command === "lease-retire") {
+    if (values["approve-report"]) {
+      const report = store.setting(
+        "leaseRetirementReport:" + values["approve-report"],
+      );
+      if (!report)
+        throw new Error("Prepare and review a lease retirement report first");
+      print(
+        executeLeaseRetirement(store, report.request, values["approve-report"]),
+      );
+    } else {
+      if (
+        !["conversation", "check"].includes(values.kind ?? "") ||
+        !values["target-id"]
+      )
+        throw new Error(
+          "--kind conversation|check and --target-id are required",
+        );
+      if (!!values["scratch-artifact"] !== !!values.reason)
+        throw new Error(
+          "--scratch-artifact and --reason must be provided together",
+        );
+      const report = prepareLeaseRetirement(store, {
+        kind: values.kind as "conversation" | "check",
+        targetId: values["target-id"],
+        landedRef: values["landed-ref"],
+        scratch: values["scratch-artifact"]
+          ? { artifactId: values["scratch-artifact"], reason: values.reason! }
+          : undefined,
+      });
+      store.setting("leaseRetirementReport:" + report.reportId, report);
+      print(report);
     }
   } else if (command === "import") {
     if (!values.source) throw new Error("--source is required");

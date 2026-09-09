@@ -3,9 +3,73 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Store } from "./store.ts";
-import { atomic } from "./home.ts";
+import { atomic, ownHome } from "./home.ts";
 function digest(content: Buffer | string) {
   return createHash("sha256").update(content).digest("hex");
+}
+function overlaps(a: string, b: string) {
+  return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+}
+function canonicalDestination(value: string) {
+  let ancestor = path.resolve(value);
+  const tail: string[] = [];
+  while (!fs.existsSync(ancestor)) {
+    tail.unshift(path.basename(ancestor));
+    ancestor = path.dirname(ancestor);
+  }
+  return path.join(fs.realpathSync(ancestor), ...tail);
+}
+function rejectSymlinks(file: string) {
+  let current = path.resolve(file);
+  while (current !== path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink())
+        throw new Error("Migration refuses symbolic links: " + current);
+    } catch (error: any) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+function guardApp(home: string) {
+  for (const name of [
+    "",
+    "owner.lock",
+    "control-mode",
+    "state.sqlite",
+    "state.sqlite-wal",
+    "state.sqlite-shm",
+    "cutover-journal.json",
+    "cutover-receipt.json",
+    "rollback-receipt.json",
+    "objects",
+    "migration-aborts",
+  ])
+    rejectSymlinks(path.join(fs.realpathSync(home), "app", name));
+}
+function validateDestination(store: Store, destination: string) {
+  const resolved = canonicalDestination(destination);
+  const homes = [
+    fs.realpathSync(store.home),
+    store.setting("lastImport")?.source,
+  ].filter(Boolean);
+  if (
+    homes.some(
+      (home) =>
+        resolved === home ||
+        resolved.startsWith(home + path.sep) ||
+        home.startsWith(resolved + path.sep),
+    )
+  )
+    throw new Error(
+      "Rollback export must be outside and not overlap the app or legacy home",
+    );
+  if (
+    fs.existsSync(resolved) &&
+    (!fs.statSync(resolved).isDirectory() || fs.readdirSync(resolved).length)
+  )
+    throw new Error("Rollback destination must be absent or empty");
+  return resolved;
 }
 export function snapshotLegacy(source: string) {
   const root = fs.realpathSync(source);
@@ -42,6 +106,15 @@ export function snapshotLegacy(source: string) {
     fingerprint: digest(JSON.stringify(files)),
     observedAt: new Date().toISOString(),
   };
+}
+function legacyStatus(section: string) {
+  return /cancelled|canceled/i.test(section)
+    ? "cancelled"
+    : /done|complete|archive/i.test(section)
+      ? "completed"
+      : /in.flight|active|in.progress/i.test(section)
+        ? "active"
+        : "backlog";
 }
 export function importLegacy(store: Store, source: string) {
   const before = snapshotLegacy(source);
@@ -83,11 +156,40 @@ export function importLegacy(store: Store, source: string) {
           ]),
       );
       if (mapped) {
+        store.db
+          .prepare(
+            "UPDATE wakes SET state='cancelled' WHERE ticket_id=? AND state!='handled'",
+          )
+          .run(mapped.ticket_id);
         existing++;
         const previous = store.setting("legacy:" + mapped.ticket_id);
+        previous.holds = [
+          ...row.line.matchAll(/(?:blocked-by|hold):\s*([^\n]+)/gi),
+        ].map((match) => match[1]);
+        store.setting("legacy:" + mapped.ticket_id, previous);
+        if (/human.only|manual|private/i.test(row.section)) {
+          const privateTicket = store.ticket(mapped.ticket_id, {
+            kind: "user",
+            id: "migration",
+          });
+          privateTicket.handling = "human_only";
+          store.putTicket(privateTicket);
+        }
+        const mappedTicket = store.ticket(mapped.ticket_id, {
+          kind: "user",
+          id: "migration",
+        });
+        const derivedHandling = /human.only|manual|private/i.test(row.section)
+          ? "human_only"
+          : "agent_managed";
+        const needsNormalization =
+          mappedTicket.version === (previous?.lastImportedVersion ?? 1) &&
+          (mappedTicket.status !== legacyStatus(row.section) ||
+            mappedTicket.handling !== derivedHandling);
         const nextHistory =
           before.files["state/" + row.id + ".status"]?.content ?? "";
         if (
+          needsNormalization ||
           previous?.raw !== row.line ||
           JSON.stringify(previous?.metadata) !== JSON.stringify(metadata) ||
           previous?.statusHistory !== nextHistory ||
@@ -112,9 +214,8 @@ export function importLegacy(store: Store, source: string) {
               .replace(/^\s*[-*]\s+(?:\[[ x]\]\s*)?/, "")
               .slice(0, 240);
             ticket.order = row.index;
-            ticket.status = /done|complete|archive/i.test(row.section)
-              ? "completed"
-              : "backlog";
+            ticket.status = legacyStatus(row.section);
+            ticket.handling = derivedHandling;
             ticket.version++;
             store.putTicket(ticket);
             store.setting("legacy:" + ticket.id, {
@@ -147,13 +248,19 @@ export function importLegacy(store: Store, source: string) {
               ),
             ].map((url) => ({ kind: "github_pr", url })),
             kind: metadata.kind === "scout" ? "investigation" : "change",
+            handling: /human.only|manual|private/i.test(row.section)
+              ? "human_only"
+              : "agent_managed",
           },
         },
       );
       const ticket = result.ticket;
-      ticket.status = /done|complete|archive/i.test(row.section)
-        ? "completed"
-        : "backlog";
+      store.db
+        .prepare(
+          "UPDATE wakes SET state='cancelled' WHERE ticket_id=? AND state!='handled'",
+        )
+        .run(ticket.id);
+      ticket.status = legacyStatus(row.section);
       ticket.order = row.index;
       store.putTicket(ticket);
       store.setting("legacy:" + ticket.id, {
@@ -341,7 +448,13 @@ export function prepareCutover(
         pid,
         reason: "Quiesce this legacy owner before cutover",
       });
-    } catch {}
+    } catch (error: any) {
+      if (error.code !== "ESRCH")
+        activeLocks.push({
+          path: relative,
+          reason: "Could not verify legacy owner exit",
+        });
+    }
   }
   const ownerFile = path.join(root, "app", "owner.lock");
   if (fs.existsSync(ownerFile)) {
@@ -367,8 +480,33 @@ export function prepareCutover(
         });
     }
   }
+  const migrationConflicts = store.db
+    .prepare("SELECT key FROM settings WHERE key LIKE 'migration-conflict:%'")
+    .all();
+  const targetState: string[] = [];
+  for (const name of [
+    "control-mode",
+    "state.sqlite",
+    "cutover-receipt.json",
+    "rollback-receipt.json",
+  ]) {
+    if (fs.existsSync(path.join(root, "app", name))) targetState.push(name);
+  }
+  const journalFile = path.join(root, "app", "cutover-journal.json");
+  if (fs.existsSync(journalFile)) {
+    try {
+      if (readJson(journalFile).phase !== "aborted")
+        targetState.push("cutover-journal.json");
+    } catch {
+      targetState.push("unreadable cutover-journal.json");
+    }
+  }
+  const overlappingHomes = overlaps(root, fs.realpathSync(store.home));
   const report = {
     schema: "firstmate.cutover-report.v1",
+    targetState,
+    overlappingHomes,
+    migrationConflicts,
     id: randomUUID(),
     source: root,
     stagingHome: store.home,
@@ -382,11 +520,24 @@ export function prepareCutover(
       id: "migration",
     }).length,
     ready:
+      !overlappingHomes &&
+      targetState.length === 0 &&
+      migrationConflicts.length === 0 &&
       missingFence.length === 0 &&
       activeLocks.length === 0 &&
       !!snapshot.files["data/backlog.md"] &&
       store.conversations({ kind: "user", id: "migration" }).length === 0,
     actions: [
+      ...(overlappingHomes
+        ? [
+            "Use disjoint source and staging directories before preparing cutover.",
+          ]
+        : []),
+      ...(targetState.length
+        ? [
+            "Existing target app state requires recovery or abort of its incomplete transfer, or archival and reconciliation of a completed or released migration before a new cutover.",
+          ]
+        : []),
       "Quiesce the old supervisor and watcher; retain workers.",
       "Install the reviewed common-fence entrypoints in the target home.",
       "Run cutover with this exact report ID after reviewing the backup and rollback results.",
@@ -397,102 +548,407 @@ export function prepareCutover(
   store.setting("cutoverReport:" + report.id, report);
   return report;
 }
+function readJson(file: string) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+function assertNoRunners(store: Store) {
+  if (
+    store.db
+      .prepare(
+        "SELECT id FROM outbox WHERE state IN ('pending','dispatching','uncertain') LIMIT 1",
+      )
+      .get()
+  )
+    throw new Error(
+      "Resolve pending or ambiguous provider effects before releasing ownership",
+    );
+  const root = path.join(store.home, "app", "runners");
+  if (fs.existsSync(root))
+    for (const entry of fs.readdirSync(root)) {
+      const file = path.join(root, entry, "identity.json");
+      if (!fs.existsSync(file))
+        throw new Error("Runner identity is ambiguous: " + entry);
+      const identity = readJson(file);
+      for (const key of ["pid", "providerPid"]) {
+        const pid = identity[key];
+        if (pid === undefined && key === "providerPid") continue;
+        if (!Number.isInteger(pid) || pid < 2)
+          throw new Error("Runner identity is ambiguous");
+        try {
+          process.kill(pid, 0);
+        } catch (error: any) {
+          if (error.code === "ESRCH") continue;
+          throw error;
+        }
+        throw new Error(
+          "Park and stop all app runners before releasing ownership",
+        );
+      }
+    }
+  for (const c of store.conversations({ kind: "user", id: "migration" })) {
+    if (
+      (c.providerId || c.runnerId) &&
+      (!c.runnerId ||
+        !fs.existsSync(path.join(root, c.runnerId, "identity.json")))
+    )
+      throw new Error(
+        "Conversation runner identity is missing or ambiguous: " + c.id,
+      );
+  }
+  if (
+    store
+      .conversations({ kind: "user", id: "migration" })
+      .some((c) => !["idle", "lost", "failed"].includes(c.state))
+  )
+    throw new Error(
+      "Resolve active or ambiguous conversations before releasing ownership",
+    );
+}
+function approve(store: Store, report: any, id: string, key: string) {
+  if (
+    !report ||
+    report.id !== id ||
+    report.stagingHome !== store.home ||
+    !report.ready ||
+    JSON.stringify(store.setting(key + id)) !== JSON.stringify(report)
+  )
+    throw new Error(
+      "Operation needs explicit approval of a ready report from this staging home",
+    );
+  if (!store.setting("policy").paused)
+    throw new Error("Pause dispatch before ownership transfer");
+}
 export async function executeCutover(
   store: Store,
   report: any,
   approvalId: string,
 ) {
-  if (
-    report.id !== approvalId ||
-    report.stagingHome !== store.home ||
-    !report.ready
-  )
-    throw new Error(
-      "Cutover needs explicit approval of a ready report from this staging home",
-    );
-  if (!store.setting("policy").paused)
-    throw new Error("Pause staging dispatch before cutover");
+  return transfer(store, report, approvalId, false);
+}
+export async function recoverCutover(
+  store: Store,
+  report: any,
+  approvalId: string,
+) {
+  return transfer(store, report, approvalId, true);
+}
+async function transfer(
+  store: Store,
+  report: any,
+  approvalId: string,
+  recovery: boolean,
+) {
+  approve(store, report, approvalId, "cutoverReport:");
   const source = fs.realpathSync(report.source);
-  if (source === store.home)
-    throw new Error("Use a separate staging home for cutover");
-  const current = snapshotLegacy(source);
-  if (current.fingerprint !== report.sourceFingerprint)
-    throw new Error("Legacy state changed; prepare and review a fresh report");
-  const refreshed = prepareCutover(store, source, report.repositoryRoot);
-  if (
-    !refreshed.ready ||
-    refreshed.sourceFingerprint !== report.sourceFingerprint
-  )
-    throw new Error(
-      "Ownership or source changed; review a fresh cutover report",
-    );
-  const appDir = path.join(source, "app");
-  fs.mkdirSync(appDir, { recursive: true, mode: 0o700 });
-  const { ownHome, atomic: publish } = await import("./home.ts");
+  if (overlaps(source, fs.realpathSync(store.home)))
+    throw new Error("Source and staging homes must be disjoint for cutover");
+  guardApp(source);
+  const app = path.join(source, "app");
+  fs.mkdirSync(app, { recursive: true, mode: 0o700 });
   const release = ownHome(source);
   try {
-    const receiptFile = path.join(appDir, "cutover-receipt.json");
-    if (fs.existsSync(receiptFile)) {
-      const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
-      if (receipt.reportId === report.id) return receipt;
-      throw new Error("Target already records another ownership transfer");
-    }
-    if (fs.existsSync(path.join(appDir, "state.sqlite")))
+    const receiptFile = path.join(app, "cutover-receipt.json");
+    const journalFile = path.join(app, "cutover-journal.json");
+    const markerFile = path.join(app, "control-mode");
+    const refreshed = prepareCutover(store, source, report.repositoryRoot);
+    const externalLocks = refreshed.activeLocks.filter(
+      (lock: any) =>
+        !(lock.path === "app/owner.lock" && lock.pid === process.pid),
+    );
+    if (
+      refreshed.missingFence.length ||
+      externalLocks.length ||
+      refreshed.stagedNativeConversations ||
+      refreshed.migrationConflicts.length
+    )
       throw new Error(
-        "Target already has app state; reconcile it instead of overwriting",
+        "Ownership or source changed; review a fresh cutover report",
+      );
+    if (fs.existsSync(receiptFile)) {
+      const receipt = readJson(receiptFile);
+      if (receipt.reportId !== report.id)
+        throw new Error("Target records another ownership transfer");
+      if (!fs.existsSync(markerFile) || readJson(markerFile).mode !== "app")
+        throw new Error("Ownership was released or is ambiguous");
+      store.setting("transferDestination", source);
+      store.setting("shadowMode", true);
+      return receipt;
+    }
+    let journal = fs.existsSync(journalFile) ? readJson(journalFile) : null;
+    if (
+      journal &&
+      journal.backup !==
+        path.join(store.home, "app", "migration-backups", journal.reportId)
+    )
+      throw new Error("Unexpected recovery backup path");
+    if (journal) rejectSymlinks(journal.backup);
+    if (journal?.phase === "aborted") {
+      if (journal.reportId === report.id || fs.existsSync(markerFile))
+        throw new Error("Transfer was aborted; prepare a fresh report");
+      journal = null;
+    }
+    if (
+      journal &&
+      (!recovery ||
+        journal.reportId !== report.id ||
+        journal.stagingHome !== store.home)
+    )
+      throw new Error(
+        "Incomplete transfer: recover using its exact approved report",
       );
     if (snapshotLegacy(source).fingerprint !== report.sourceFingerprint)
-      throw new Error(
-        "Legacy state changed before exclusive ownership was acquired",
+      throw new Error("Legacy state changed; prepare a fresh report");
+    if (!journal) {
+      if (
+        fs.existsSync(markerFile) ||
+        fs.existsSync(path.join(app, "state.sqlite"))
+      )
+        throw new Error("Target already has app state or ownership marker");
+      const backup = path.join(
+        store.home,
+        "app",
+        "migration-backups",
+        report.id,
       );
-    const backup = path.join(store.home, "app", "migration-backups", report.id);
-    fs.mkdirSync(backup, { recursive: true, mode: 0o700 });
-    for (const name of ["state", "data", "config"])
-      if (fs.existsSync(path.join(source, name)))
-        fs.cpSync(path.join(source, name), path.join(backup, name), {
-          recursive: true,
-          dereference: false,
-        });
-    // The persistent marker fences every upgraded shell path before the final delta.
-    publish(
-      path.join(appDir, "control-mode"),
+      rejectSymlinks(backup);
+      fs.mkdirSync(backup, { recursive: true, mode: 0o700 });
+      for (const name of ["state", "data", "config"])
+        if (fs.existsSync(path.join(source, name)))
+          fs.cpSync(path.join(source, name), path.join(backup, name), {
+            recursive: true,
+            dereference: false,
+          });
+      journal = {
+        reportId: report.id,
+        stagingHome: store.home,
+        backup,
+        phase: "prepared",
+      };
+      atomic(journalFile, JSON.stringify(journal));
+    }
+    if (
+      fs.existsSync(markerFile) &&
+      readJson(markerFile).reportId !== report.id
+    )
+      throw new Error("Ownership marker disagrees with recovery journal");
+    atomic(
+      markerFile,
       JSON.stringify({
         mode: "app",
         reportId: report.id,
         stagingHome: store.home,
-        createdAt: new Date().toISOString(),
       }),
     );
-    try {
+    // A complete immutable database image is built before publishing the target database.
+    // Recovery only reuses this image; it never overwrites a runtime-modified target.
+    const image = path.join(journal.backup, "transfer.sqlite");
+    if (journal.phase === "prepared") {
+      if (fs.existsSync(path.join(app, "state.sqlite")))
+        throw new Error("Unexpected target database before image publication");
       importLegacy(store, source);
+      const conflicts = store.db
+        .prepare(
+          "SELECT key FROM settings WHERE key LIKE 'migration-conflict:%'",
+        )
+        .all();
+      if (conflicts.length)
+        throw new Error("Resolve migration conflicts before recovery");
       store.setting("shadowMode", false);
       store.setting("legacyCheckpoint", snapshotLegacy(source));
-      await store.backup(path.join(appDir, "state.sqlite"));
-      store.setting("transferDestination", source);
-      store.setting("shadowMode", true);
-      const objects = path.join(store.home, "app", "objects");
-      if (fs.existsSync(objects))
-        fs.cpSync(objects, path.join(appDir, "objects"), { recursive: true });
-    } catch (error) {
-      throw new Error(
-        "Transfer is fenced but incomplete. Keep both supervisors paused and recover from the staged backup: " +
-          String(error),
-      );
+      try {
+        await store.backup(image);
+      } finally {
+        store.setting("shadowMode", true);
+      }
+      journal = {
+        ...journal,
+        phase: "image-ready",
+        imageHash: digest(fs.readFileSync(image)),
+      };
+      atomic(journalFile, JSON.stringify(journal));
     }
+    if (digest(fs.readFileSync(image)) !== journal.imageHash)
+      throw new Error("Transfer image changed; recovery refused");
+    const target = path.join(app, "state.sqlite");
+    if (fs.existsSync(target)) {
+      if (
+        fs.existsSync(target + "-wal") ||
+        digest(fs.readFileSync(target)) !== journal.imageHash
+      )
+        throw new Error("Target database changed; recovery refused");
+    } else atomic(target, fs.readFileSync(image));
+    const objects = path.join(store.home, "app", "objects");
+    if (fs.existsSync(objects))
+      fs.cpSync(objects, path.join(app, "objects"), { recursive: true });
     const receipt = {
       schema: "firstmate.ownership.v1",
       complete: true,
       reportId: report.id,
       source,
-      backup,
+      backup: journal.backup,
       transferredAt: new Date().toISOString(),
       paused: true,
       workerSessions: "retained externally",
-      nextAction:
-        "Start exactly one app runtime against the target home after reviewing the retained attempts.",
     };
-    publish(receiptFile, JSON.stringify(receipt, null, 2));
+    atomic(receiptFile, JSON.stringify(receipt, null, 2));
+    store.setting("transferDestination", source);
+    store.setting("shadowMode", true);
     return receipt;
+  } finally {
+    release();
+  }
+}
+export function prepareRollback(store: Store, destination: string) {
+  guardApp(store.home);
+  assertNoRunners(store);
+  const receipt = readJson(
+    path.join(store.home, "app", "cutover-receipt.json"),
+  );
+  const report = {
+    schema: "firstmate.rollback-report.v1",
+    id: randomUUID(),
+    stagingHome: store.home,
+    destination: validateDestination(store, destination),
+    transferReportId: receipt.reportId,
+    ready: !!store.setting("policy").paused,
+    generation: store.setting("generation"),
+    eventSequence: store.db
+      .prepare("SELECT MAX(sequence) AS n FROM events")
+      .get(),
+  };
+  if (
+    report.destination === store.home ||
+    report.destination.startsWith(store.home + path.sep)
+  )
+    throw new Error("Rollback export must be outside the app home");
+  store.setting("rollbackReport:" + report.id, report);
+  return report;
+}
+export async function executeRollback(
+  store: Store,
+  report: any,
+  approvalId: string,
+  options: { ownershipHeld?: boolean } = {},
+) {
+  approve(store, report, approvalId, "rollbackReport:");
+  guardApp(store.home);
+  const release = options.ownershipHeld ? () => {} : ownHome(store.home);
+  try {
+    const app = path.join(store.home, "app");
+    const file = path.join(app, "rollback-receipt.json");
+    if (fs.existsSync(file) || store.setting("ownershipReleased")) {
+      const receipt = fs.existsSync(file)
+        ? readJson(file)
+        : store.setting("ownershipReleased");
+      if (receipt.reportId !== report.id)
+        throw new Error("Another rollback is already recorded");
+      if (!fs.existsSync(file)) atomic(file, JSON.stringify(receipt, null, 2));
+      if (fs.existsSync(path.join(app, "control-mode"))) {
+        if (
+          readJson(path.join(app, "control-mode")).reportId !==
+          report.transferReportId
+        )
+          throw new Error("Ownership changed after rollback");
+        fs.unlinkSync(path.join(app, "control-mode"));
+      }
+      return receipt;
+    }
+    assertNoRunners(store);
+    if (
+      JSON.stringify(
+        store.db.prepare("SELECT MAX(sequence) AS n FROM events").get(),
+      ) !== JSON.stringify(report.eventSequence)
+    )
+      throw new Error("App changed; review a fresh rollback report");
+    const marker = readJson(path.join(app, "control-mode"));
+    if (marker.reportId !== report.transferReportId || marker.mode !== "app")
+      throw new Error("Ownership marker disagrees with rollback report");
+    if (validateDestination(store, report.destination) !== report.destination)
+      throw new Error("Rollback destination changed");
+    await rollbackExport(store, report.destination);
+    // Do not overwrite legacy state with app history. The managed export is reviewable,
+    // and private records remain exclusively in the private export and retained DB.
+    const receipt = {
+      schema: "firstmate.rollback.v1",
+      reportId: report.id,
+      export: report.destination,
+      ownershipTransferred: true,
+      legacyStateUnchanged: true,
+      releasedAt: new Date().toISOString(),
+    };
+    store.setting("shadowMode", true);
+    store.setting("ownershipReleased", receipt);
+    atomic(file, JSON.stringify(receipt, null, 2));
+    fs.unlinkSync(path.join(app, "control-mode"));
+    const fd = fs.openSync(app, "r");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    return receipt;
+  } finally {
+    release();
+  }
+}
+
+export async function abortCutover(
+  store: Store,
+  report: any,
+  approvalId: string,
+) {
+  approve(store, report, approvalId, "cutoverReport:");
+  const source = fs.realpathSync(report.source);
+  if (source === fs.realpathSync(store.home))
+    throw new Error("Abort requires the original staging home");
+  guardApp(source);
+  const app = path.join(source, "app");
+  const release = ownHome(source);
+  try {
+    if (fs.existsSync(path.join(app, "cutover-receipt.json")))
+      throw new Error("Completed transfers require rollback, not abort");
+    const journalFile = path.join(app, "cutover-journal.json");
+    const journal = readJson(journalFile);
+    if (journal.reportId !== report.id || journal.stagingHome !== store.home)
+      throw new Error("Abort report disagrees with transfer journal");
+    const marker = path.join(app, "control-mode");
+    if (fs.existsSync(marker) && readJson(marker).reportId !== report.id)
+      throw new Error("Abort ownership marker is ambiguous");
+    const runners = path.join(app, "runners");
+    if (fs.existsSync(runners) && fs.readdirSync(runners).length)
+      throw new Error("Target runner state is ambiguous; abort refused");
+    const target = path.join(app, "state.sqlite");
+    if (fs.existsSync(target + "-wal") || fs.existsSync(target + "-shm"))
+      throw new Error("Target runtime state is ambiguous; abort refused");
+    if (
+      fs.existsSync(target) &&
+      (!journal.imageHash ||
+        digest(fs.readFileSync(target)) !== journal.imageHash)
+    )
+      throw new Error("Target database changed; abort refused");
+    const archive = path.join(app, "migration-aborts", report.id);
+    rejectSymlinks(archive);
+    fs.mkdirSync(archive, { recursive: true, mode: 0o700 });
+    for (const name of ["state.sqlite", "objects"]) {
+      const file = path.join(app, name);
+      if (fs.existsSync(file)) {
+        const archived = path.join(archive, name);
+        if (fs.existsSync(archived))
+          throw new Error("Abort archive collision; inspect retained state");
+        fs.renameSync(file, archived);
+      }
+    }
+    atomic(
+      journalFile,
+      JSON.stringify({ ...journal, phase: "aborted", archive }),
+    );
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
+    const fd = fs.openSync(app, "r");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    return {
+      reportId: report.id,
+      aborted: true,
+      archive,
+      legacyStateUnchanged: true,
+    };
   } finally {
     release();
   }

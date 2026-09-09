@@ -121,15 +121,48 @@ Subscription invoices and a separate count of unrelated activity are unavailable
 In **Settings > Appearance**, choose system, vaporwave light, or vaporwave dark.
 
 
-To inspect legacy state, use a separate isolated home and `import --source /absolute/path/to/legacy-home`.
+To inspect legacy state, use a separate isolated staging home and `import --source /absolute/path/to/legacy-home`.
 Import reads backlog and targeted metadata and status files without running legacy scripts.
 Shadow mode cannot start provider sessions or enable dispatch.
-Reimport preserves IDs and reports competing local edits.
-`rollback --output /absolute/path/to/export-directory` exports current managed history and keeps Human only records in a separate user-only file.
-To prepare a transfer report, run `cutover --source /absolute/path/to/legacy-home --json` from the paused staging home.
-Only an explicitly approved report ID can execute the transfer with `--approve-report <id>`.
-The destination requires a completed transfer receipt and `--transferred-home`; ordinary development commands still refuse the canonical live home.
-Rollback exports current history and does not release ownership or restart legacy supervision.
+Reimport preserves ticket IDs and reports competing local edits.
+
+To prepare migration, pause dispatch and stop the app runtime before running commands that acquire ownership.
+First rehearse against an operational copy of the legacy home.
+Keep the legacy Firstmate and watcher paused during installation and transfer; retain workers as externally managed sessions.
+From the staging home, run `fence-install --source /absolute/path/to/legacy-home --json`.
+Review the exact source and target hashes, local-edit checks, and blockers, then run `fence-install --approve-report <id>`.
+Installation preserves originals and rejects changed files or active owners.
+For operational homes without Git metadata, review the existing file hashes explicitly because no clean Git baseline is available.
+If installation stops partway through, rerun the same approved report; unexpected edits block recovery.
+
+Run `cutover --source /absolute/path/to/legacy-home --json` to prepare the transfer report.
+After reviewing a ready report, run `cutover --approve-report <id>` from the same staging home.
+Transfer backs up legacy state, installs a persistent ownership marker, imports the final state, and publishes a paused app database.
+If transfer stops before completion, run `cutover --recover --approve-report <id>` from the original staging home.
+If recovery cannot continue, `cutover-abort --approve-report <id>` releases an unchanged incomplete transfer and preserves the partial app image in the backup.
+Abort refuses completed transfers, changed app images, or ambiguous worker activity.
+
+Start the transferred home with `start --home /absolute/path/to/legacy-home --transferred-home`.
+The canonical live home requires a matching completed receipt and app ownership marker.
+Verify imported tickets and retained worker identities before enabling automatic dispatch.
+Legacy workers remain externally managed; migration does not silently attach or restart them.
+Restart the legacy controller or watcher manually only after a successful rollback releases app ownership.
+
+`rollback --output /absolute/path/to/export-directory` exports current history without releasing ownership.
+To release ownership, pause dispatch, park app-native sessions, stop the runtime, and run `rollback --release-ownership --output /absolute/path/to/export-directory` against the transferred home.
+Review the report, then run `rollback --release-ownership --approve-report <id>` with the same home.
+Include `--transferred-home` when the target is the canonical live home.
+Rollback exports managed history and private Human only records separately, retains the app database, and removes the ownership marker.
+It leaves legacy state unchanged; reconcile the managed export before manually restarting legacy supervision.
+Repeat the same approved rollback command if receipt publication or marker removal was interrupted.
+Released app history supports inspection and backup, but cannot restart a runtime.
+
+To retire an app-owned checkout, run `lease-retire --kind conversation --target-id <id> --landed-ref refs/remotes/origin/main` against a paused, stopped app home.
+Use `--kind check` for a check job.
+Refresh the repository's tracking ref before preparing a landed-work report.
+For unlanded scratch work, use `--scratch-artifact <artifact-id> --reason <text>` instead.
+Review the report, then run `lease-retire --approve-report <id>` from the same home.
+Retirement checks the exact lease, clean checkout, settled sessions, and preserved evidence, then returns the lease without force.
 
 Codex streaming, permission replies, takeover, exact resume, native worker dispatch, and independent revision-bound review have isolated integration coverage.
 Claude worker startup, exact-session resume, streaming, permission presentation, and interruption have isolated coverage.

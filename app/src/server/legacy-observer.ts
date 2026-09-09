@@ -19,6 +19,13 @@ export function observeLegacy(store: Store) {
     changed,
     requiresReconciliation: true,
   });
+  // A changed backlog can move work across the privacy boundary. Until a user
+  // reconciles that snapshot, no status content is safe to publish to agents.
+  if (
+    current.files["data/backlog.md"]?.hash !==
+    checkpoint.files["data/backlog.md"]?.hash
+  )
+    return;
   for (const name of changed) {
     const id = name.match(/^state\/([^/]+)\.status$/)?.[1];
     if (!id) continue;
@@ -42,9 +49,8 @@ export function observeLegacy(store: Store) {
       "text/plain",
     );
     const key = "legacy-status:" + ticket.id + ":" + current.fingerprint;
-    store.db
-      .prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)")
-      .run(
+    if (!store.externallyManaged(ticket.id))
+      store.db.prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)").run(
         key,
         ticket.id,
         "pending",

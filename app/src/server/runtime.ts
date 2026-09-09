@@ -34,6 +34,7 @@ export class Runtime {
   timer?: NodeJS.Timeout;
   constructor(public store: Store) {}
   start() {
+    this.store.assertOwner();
     this.stopped = false;
     // Read-only remote collection is safe to repeat after an interrupted read.
     this.store.db
@@ -112,6 +113,24 @@ export class Runtime {
         ].includes(job.kind)
           ? null
           : this.store.conversation(job.target_id, internal);
+        if (
+          c &&
+          (this.store.setting("lease-retirement-intent:conversation:" + c.id) ||
+            this.store.setting("retired-lease:conversation:" + c.id))
+        ) {
+          this.store.db
+            .prepare("UPDATE outbox SET state='cancelled' WHERE id=?")
+            .run(job.id);
+          continue;
+        }
+        const ticketId =
+          c?.ticketId ?? (c === null ? job.target_id : undefined);
+        if (ticketId && this.store.externallyManaged(ticketId)) {
+          this.store.db
+            .prepare("UPDATE outbox SET state='cancelled' WHERE id=?")
+            .run(job.id);
+          continue;
+        }
         const commandActor = JSON.parse(
           (
             this.store.db
@@ -252,6 +271,7 @@ export class Runtime {
       id: "poller",
     })) {
       if (
+        this.store.externallyManaged(ticket.id) ||
         !ticket.revision ||
         ["completed", "cancelled"].includes(ticket.status)
       )
@@ -294,6 +314,7 @@ export class Runtime {
       .prepare("SELECT * FROM retries WHERE state='scheduled' AND due_at<=?")
       .all(now()) as any[]) {
       const t = this.store.ticket(schedule.ticket_id, internal);
+      if (this.store.externallyManaged(t.id)) continue;
       if ((t.revision ?? null) !== schedule.revision) {
         this.store.db
           .prepare("UPDATE retries SET state='obsolete' WHERE id=?")
@@ -435,6 +456,8 @@ export class Runtime {
         )
         .all() as any[]
     ).find((w) => {
+      if (w.ticket_id && this.store.externallyManaged(w.ticket_id))
+        return false;
       const d = JSON.parse(w.data);
       return (
         (d.presentations ?? 0) < 3 &&
@@ -481,6 +504,7 @@ export class Runtime {
     })();
   }
   async launch(c: Conversation) {
+    this.store.assertLeaseActive(c.id);
     if (c.runnerId) {
       const old = this.identity(c);
       if (old && alive(old.pid, old.startIdentity))
@@ -493,6 +517,7 @@ export class Runtime {
         );
     }
     if (c.ticketId) {
+      this.store.assertManaged(c.ticketId);
       const t = this.store.ticket(c.ticketId, internal);
       if (
         t.handling === "human_only" ||

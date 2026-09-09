@@ -1408,6 +1408,21 @@ function TicketDetail({
         <div className="notice">
           Human only. This ticket is excluded from agent context and actions.
         </div>
+      ) : detail?.legacy?.management === "external" ? (
+        <div className="notice">
+          <strong>Externally managed legacy ticket</strong>
+          <p>
+            The app observes retained workers and keeps their history. It cannot
+            start a duplicate worker for this ticket.
+          </p>
+          <p>{detail.adoption?.reason}</p>
+          {detail.adoption?.eligible && (
+            <button onClick={() => act("ticket.adopt", {}, t.id, t.version)}>
+              Adopt queued ticket
+            </button>
+          )}
+          {detail.legacy.completion && <p>{detail.legacy.completion}</p>}
+        </div>
       ) : (
         <>
           <h3>Delivery</h3>
@@ -1532,9 +1547,9 @@ function TicketDetail({
           <button>Add</button>
         </form>
       </details>
-      {detail?.legacy && (
+      {detail?.legacy?.management === "app" && (
         <div className="notice">
-          Imported legacy record · Externally managed.{" "}
+          Imported legacy record · Adopted into app management.{" "}
           {detail.legacy.completion}
         </div>
       )}
@@ -1549,7 +1564,8 @@ function TicketDetail({
             <small>{f.location}</small>
           </div>
         ))}
-      {t.handling === "agent_managed" &&
+      {detail?.legacy?.management !== "external" &&
+        t.handling === "agent_managed" &&
         !["completed", "cancelled"].includes(t.status) &&
         detail?.findings?.some((f: any) => f.status !== "resolved") && (
           <button onClick={() => act("ticket.repair", {}, t.id, t.version)}>
@@ -1572,15 +1588,16 @@ function TicketDetail({
               {a.role} · Attempt {a.ordinal}
             </strong>
             <span>{a.state}</span>
-            {["failed", "interrupted"].includes(a.state) && (
-              <button
-                onClick={() =>
-                  act("stage.retry", { stage: a.role }, t.id, t.version)
-                }
-              >
-                Retry
-              </button>
-            )}
+            {detail?.legacy?.management !== "external" &&
+              ["failed", "interrupted"].includes(a.state) && (
+                <button
+                  onClick={() =>
+                    act("stage.retry", { stage: a.role }, t.id, t.version)
+                  }
+                >
+                  Retry
+                </button>
+              )}
           </div>
         ))
       ) : (

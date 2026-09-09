@@ -5,7 +5,11 @@ import { execFileSync } from "node:child_process";
 import { flockSync } from "fs-ext";
 export function homePath(
   value = process.env.FM_HOME,
-  options: { allowTransferred?: boolean } = {},
+  options: {
+    allowTransferred?: boolean;
+    allowReleasedRecovery?: boolean;
+    rollbackReportId?: string;
+  } = {},
 ): string {
   if (!value || !path.isAbsolute(value))
     throw new Error("Set FM_HOME to an explicit absolute isolated home.");
@@ -37,7 +41,37 @@ export function homePath(
           receipt.schema === "firstmate.ownership.v1" &&
           receipt.complete === true &&
           receipt.source === canonical &&
+          marker.mode === "app" &&
           receipt.reportId === marker.reportId &&
+          fs.existsSync(path.join(canonical, "app", "state.sqlite"));
+      } catch {}
+    }
+    if (
+      !transferred &&
+      options.allowTransferred &&
+      options.allowReleasedRecovery &&
+      canonical === live
+    ) {
+      try {
+        const receipt = JSON.parse(
+          fs.readFileSync(
+            path.join(canonical, "app", "rollback-receipt.json"),
+            "utf8",
+          ),
+        );
+        const transfer = JSON.parse(
+          fs.readFileSync(
+            path.join(canonical, "app", "cutover-receipt.json"),
+            "utf8",
+          ),
+        );
+        transferred =
+          receipt.schema === "firstmate.rollback.v1" &&
+          receipt.ownershipTransferred === true &&
+          (!options.rollbackReportId ||
+            options.rollbackReportId === receipt.reportId) &&
+          transfer.schema === "firstmate.ownership.v1" &&
+          transfer.source === canonical &&
           fs.existsSync(path.join(canonical, "app", "state.sqlite"));
       } catch {}
     }
@@ -64,9 +98,19 @@ export function alive(pid: number, identity: string) {
 }
 export function ownHome(home: string) {
   const file = path.join(home, "app", "owner.lock");
-  const fd = fs.openSync(file, "a+", 0o600);
+  if (fs.lstatSync(path.join(home, "app")).isSymbolicLink())
+    throw new Error("Ownership directory cannot be a symlink");
+  const fd = fs.openSync(
+    file,
+    fs.constants.O_CREAT |
+      fs.constants.O_APPEND |
+      fs.constants.O_RDWR |
+      fs.constants.O_NOFOLLOW,
+    0o600,
+  );
   try {
     flockSync(fd, "exnb");
+    fs.fchmodSync(fd, 0o600);
   } catch {
     fs.closeSync(fd);
     throw new Error("Another runtime owns this home.");
