@@ -182,7 +182,7 @@ async function init() {
   identity();
   emit("runner.ready", { providerId: threadId });
 }
-async function claudeTurn(text: string) {
+async function claudeTurn(text: string, model = config.model) {
   claudeInterrupted = false;
   state = "running";
   identity();
@@ -190,7 +190,7 @@ async function claudeTurn(text: string) {
     prompt: text,
     options: {
       cwd: config.cwd,
-      model: config.model,
+      model,
       resume: threadId,
       pathToClaudeCodeExecutable: config.executable,
       settingSources: ["user", "project", "local"],
@@ -229,7 +229,7 @@ async function claudeTurn(text: string) {
         threadId = msg.session_id;
         emit("conversation.bound", {
           providerId: threadId,
-          model: config.model,
+          model,
         });
         identity();
       }
@@ -269,6 +269,11 @@ async function handle(req: any) {
         threadId,
         input: [
           { type: "text", text: req.text, text_elements: [] },
+          ...(req.skills ?? []).map((skill: any) => ({
+            type: "skill",
+            name: skill.name,
+            path: skill.path,
+          })),
           ...(req.attachments ?? []).map((a: any) =>
             a.mediaType.startsWith("image/")
               ? {
@@ -287,7 +292,7 @@ async function handle(req: any) {
           ),
         ],
         clientUserMessageId: req.messageId,
-        model: config.model,
+        model: req.model ?? config.model,
         outputSchema: config.outputSchema,
         sandboxPolicy:
           config.stage === "review"
@@ -321,6 +326,7 @@ async function handle(req: any) {
                 Buffer.from(a.base64, "base64").toString("utf8"),
             )
             .join(""),
+        req.model ?? config.model,
       );
       result = { accepted: true };
     }

@@ -49,6 +49,8 @@ export type Conversation = {
   inputOwner: string;
   version: number;
   draft?: string;
+  retiredAt?: string;
+  previousConversationId?: string;
   stage?: "implement" | "investigate" | "review" | "repair";
   reviewRevision?: string;
   baseRevision?: string;

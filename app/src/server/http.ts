@@ -4,6 +4,8 @@ import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Store } from "./store.ts";
+import { hydrateContext } from "./library.ts";
+import { nativeCatalog } from "./catalog.ts";
 import type { Actor } from "../contracts.ts";
 import { capabilities } from "../contracts.ts";
 const equal = (a: string, b: string) => {
@@ -34,7 +36,7 @@ export function serve(store: Store, port: number) {
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
       );
       if (u.pathname === "/v1/session" && req.method === "GET") {
         if (req.headers.authorization)
@@ -98,7 +100,23 @@ export function serve(store: Store, port: number) {
             return send(413, { error: "Request too large" });
         }
         if (u.pathname === "/v1/commands") {
-          const result = store.command(actor, JSON.parse(body));
+          const command = JSON.parse(body);
+          if (command.type === "conversation.model") {
+            const c = store.conversation(command.targetId, actor);
+            if (actor.kind !== "user" || c.provider !== "codex")
+              return send(403, {
+                error:
+                  "Model switching currently supports Codex through the operator controls.",
+              });
+            const catalog = await nativeCatalog(c.cwd, "models");
+            if (
+              !catalog.data.some((m: any) => m.model === command.payload.model)
+            )
+              return send(400, {
+                error: "Choose an available model from the provider catalog.",
+              });
+          }
+          const result = store.command(actor, command);
           return send(202, {
             ...result,
             statusUrl: "/v1/commands/" + result.commandId,
@@ -108,6 +126,71 @@ export function serve(store: Store, port: number) {
       }
       if (req.method !== "GET")
         return send(405, { error: "Method not allowed" });
+      if (["/v1/catalog", "/v1/context", "/v1/library"].includes(u.pathname)) {
+        if (actor.kind !== "user")
+          return send(404, { error: "Resource not found" });
+        if (u.pathname === "/v1/catalog") {
+          const cid = u.searchParams.get("conversationId");
+          const c = cid
+            ? store.conversation(cid, actor)
+            : store
+                .conversations(actor)
+                .find((c) => c.role === "supervisor" && !c.retiredAt);
+          const cwd = c?.cwd ?? store.setting("project")?.source ?? store.home;
+          const topic = u.searchParams.get("topic");
+          if (!["skills", "models", "account"].includes(topic ?? ""))
+            return send(400, { error: "Unknown catalog" });
+          const result = await nativeCatalog(
+            cwd,
+            topic as "skills" | "models" | "account",
+          );
+          if (topic === "skills" && c)
+            store.setting(
+              "skills:" + c.id,
+              result.data.flatMap((entry: any) => entry.skills),
+            );
+          return send(200, result);
+        }
+        if (u.pathname === "/v1/context") {
+          for (const c of store.conversations(actor)) hydrateContext(store, c);
+          return send(200, {
+            sessions: store.conversations(actor).map((c) => ({
+              conversation: c,
+              documents: store.setting("context:" + c.id) ?? [],
+            })),
+            coverage:
+              "Recorded launch instructions, prepared explicit skill inputs, and provider-reported Markdown reads. Provider-internal automatic reads and unreported older context are not observable.",
+          });
+        }
+        const cid = u.searchParams.get("conversationId");
+        const rows = cid
+          ? store.db
+              .prepare(
+                "SELECT DISTINCT a.* FROM artifacts a JOIN artifact_access x ON a.id=x.artifact_id WHERE x.conversation_id=?",
+              )
+              .all(store.conversation(cid, actor).id)
+          : store.db
+              .prepare("SELECT * FROM artifacts ORDER BY rowid DESC")
+              .all();
+        return send(200, { artifacts: rows });
+      }
+      if (u.pathname === "/v1/skill") {
+        if (actor.kind !== "user")
+          return send(404, { error: "Resource not found" });
+        const c = store.conversation(
+          u.searchParams.get("conversationId")!,
+          actor,
+        );
+        const skill = (store.setting("skills:" + c.id) ?? []).find(
+          (s: any) => s.path === u.searchParams.get("path"),
+        );
+        if (!skill || fs.statSync(skill.path).size > 512 * 1024)
+          return send(404, { error: "Skill not found or too large" });
+        return send(200, {
+          ...skill,
+          content: fs.readFileSync(skill.path, "utf8"),
+        });
+      }
       const commandStatus = u.pathname.match(/^\/v1\/commands\/([a-f0-9-]+)$/);
       if (commandStatus) {
         const row = store.db
@@ -257,7 +340,40 @@ export function serve(store: Store, port: number) {
           )
             return send(404, { error: "Resource not found" });
         }
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        if (u.searchParams.has("frame") && a.media_type === "text/html") {
+          if (actor.kind !== "user")
+            return send(404, { error: "Resource not found" });
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.setHeader(
+            "Content-Security-Policy",
+            "sandbox allow-scripts; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+          );
+          return fs
+            .createReadStream(path.join(store.home, "app", "objects", a.id))
+            .pipe(res);
+        }
+        if (u.searchParams.has("preview")) {
+          const content = fs.readFileSync(
+            path.join(store.home, "app", "objects", a.id),
+          );
+          const text =
+            a.media_type.startsWith("text/") ||
+            a.media_type === "application/json" ||
+            a.media_type === "image/svg+xml";
+          return send(200, {
+            ...a,
+            text: text ? content.toString("utf8") : undefined,
+            base64: text ? undefined : content.toString("base64"),
+          });
+        }
+        res.setHeader(
+          "Content-Type",
+          a.media_type.startsWith("image/") ||
+            a.media_type === "application/pdf"
+            ? a.media_type
+            : "text/plain; charset=utf-8",
+        );
+        res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
         res.setHeader("Content-Disposition", "inline");
         return fs
           .createReadStream(path.join(store.home, "app", "objects", a.id))

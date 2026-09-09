@@ -40,6 +40,24 @@ test("HTTP boundary separates operator and agent authorization and protects muta
       ).status,
       403,
     );
+    for (const route of [
+      "catalog?topic=account",
+      "catalog?topic=skills",
+      "catalog?topic=models",
+      "context",
+      "library",
+      "skill?path=/tmp/private.md",
+    ]) {
+      assert.equal(
+        (
+          await fetch(base + "/v1/" + route, {
+            headers: { Authorization: "Bearer scoped-test-token" },
+          })
+        ).status,
+        404,
+        route + " must be operator-only",
+      );
+    }
     const session = await fetch(base + "/v1/session");
     const cookie = session.headers.get("set-cookie")!.split(";")[0];
     const { csrf } = await session.json();

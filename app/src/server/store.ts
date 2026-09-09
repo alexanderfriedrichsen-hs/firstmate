@@ -104,6 +104,23 @@ export class Store {
         paused: true,
       });
   }
+  requireCurrentRunner(c: Conversation) {
+    if (!c.runnerId) return;
+    const file = path.join(
+      this.home,
+      "app",
+      "runners",
+      c.runnerId,
+      "config.json",
+    );
+    const config = fs.existsSync(file)
+      ? JSON.parse(fs.readFileSync(file, "utf8"))
+      : {};
+    if (config.runnerProtocol !== 2)
+      throw new Conflict(
+        "Park and resume the exact session to load model and skill controls in this older runner.",
+      );
+  }
   setting(key: string, value?: unknown): any {
     if (value !== undefined)
       this.db
@@ -422,9 +439,11 @@ export class Store {
       }
       if (
         v.role === "supervisor" &&
-        this.conversations(actor).some((x) => x.role === "supervisor")
+        this.conversations(actor).some(
+          (x) => x.role === "supervisor" && !x.retiredAt,
+        )
       )
-        throw new Conflict("One supervisor already exists");
+        throw new Conflict("One Firstmate already exists");
       const project = this.setting("project");
       if (!project?.source)
         throw new Conflict("Configure a project source first");
@@ -448,7 +467,54 @@ export class Store {
       const conv = this.conversation(c.targetId!, actor);
       if (c.expectedVersion !== conv.version)
         throw new Conflict("Conversation changed; refresh before retrying");
-      if (c.type === "conversation.attach") {
+      if (conv.retiredAt)
+        throw new Conflict(
+          "This chat is retained history. Use the current Firstmate chat.",
+        );
+      if (
+        c.type === "conversation.model" ||
+        c.type === "conversation.restart"
+      ) {
+        user();
+        if (conv.state !== "idle")
+          throw new Conflict(
+            "Interrupt or resume the conversation and wait until idle first.",
+          );
+        if (
+          this.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE target_id=? AND state IN ('pending','dispatching','uncertain')",
+            )
+            .get(conv.id)
+        )
+          throw new Conflict("Settle pending input before changing the chat.");
+        if (c.type === "conversation.model") {
+          if (conv.provider !== "codex")
+            throw new Conflict("Model switching currently requires Codex.");
+          this.requireCurrentRunner(conv);
+          conv.model = z.string().min(1).max(128).parse(p.model);
+        } else {
+          if (conv.role !== "supervisor")
+            throw new Conflict("New chat is available for Firstmate only.");
+          conv.retiredAt = now();
+          conv.inputOwner = actor.id;
+          this.outbox(c, "conversation.park", conv.id, {});
+          const next: Conversation = {
+            id: randomUUID(),
+            provider: conv.provider,
+            model: conv.model,
+            role: "supervisor",
+            cwd: conv.cwd,
+            incarnation: 0,
+            state: "planned",
+            inputOwner: actor.id,
+            version: 1,
+            previousConversationId: conv.id,
+          };
+          this.putConversation(next);
+          this.outbox(c, "conversation.launch", next.id, {});
+        }
+      } else if (c.type === "conversation.attach") {
         user();
         const name = z.string().min(1).max(160).parse(p.name);
         const media = z
@@ -479,8 +545,10 @@ export class Store {
           attachment: { id, name, mediaType: media },
           conversation: conv,
         };
-      }
-      if (c.type === "conversation.send" || c.type === "conversation.steer") {
+      } else if (
+        c.type === "conversation.send" ||
+        c.type === "conversation.steer"
+      ) {
         if (
           conv.ticketId &&
           conv.stage !== "review" &&
@@ -520,7 +588,30 @@ export class Store {
           this.db
             .prepare("INSERT OR IGNORE INTO message_attachments VALUES(?,?)")
             .run(mid, id);
-        this.outbox(c, c.type, conv.id, { text, messageId: mid, attachments });
+        const skills = z
+          .array(z.object({ name: z.string(), path: z.string() }))
+          .max(4)
+          .parse(p.skills ?? []);
+        if (skills.length && conv.provider !== "codex")
+          throw new Conflict("Explicit skill input currently requires Codex.");
+        if (skills.length) this.requireCurrentRunner(conv);
+        const available = this.setting("skills:" + conv.id) ?? [];
+        for (const skill of skills)
+          if (
+            !available.some(
+              (s: any) =>
+                s.enabled && s.path === skill.path && s.name === skill.name,
+            )
+          )
+            throw new Denied(
+              "Skill is not available for this session; refresh the Skills tab.",
+            );
+        this.outbox(c, c.type, conv.id, {
+          text,
+          messageId: mid,
+          attachments,
+          skills,
+        });
       } else if (c.type === "conversation.interrupt") {
         this.outbox(c, c.type, conv.id, {});
       } else if (c.type === "conversation.takeover") {

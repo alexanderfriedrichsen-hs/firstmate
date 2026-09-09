@@ -49,6 +49,13 @@ test(
           "message",
         );
     })();
+    store.artifact(
+      undefined,
+      "sandbox.html",
+      '<h1>Interactive artifact</h1><script>try { parent.document.body.dataset.escaped = "yes"; document.body.append("Unsafe"); } catch { document.body.append("Parent access blocked"); }</script>',
+      "text/html",
+      cid,
+    );
     const socket = net.createServer();
     await new Promise<void>((r) => socket.listen(0, "127.0.0.1", r));
     const port = (socket.address() as net.AddressInfo).port;
@@ -67,7 +74,7 @@ test(
       page.on("pageerror", (e) => errors.push(e.message));
       await page.goto(`http://127.0.0.1:${port}`);
       await page
-        .getByRole("heading", { name: "Supervisor", exact: true })
+        .getByRole("heading", { name: "Firstmate", exact: true })
         .waitFor();
       await page.locator(".message").first().waitFor();
       assert.ok(
@@ -132,13 +139,11 @@ test(
         .waitFor();
       await page.getByRole("textbox", { name: "Search transcript" }).fill("");
       await page.waitForTimeout(1000);
-      await page
-        .getByLabel("Attach file", { exact: true })
-        .setInputFiles({
-          name: "note.txt",
-          mimeType: "text/plain",
-          buffer: Buffer.from("Attachment fixture."),
-        });
+      await page.getByLabel("Attach file", { exact: true }).setInputFiles({
+        name: "note.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Attachment fixture."),
+      });
       await page.getByRole("button", { name: "note.txt ×" }).waitFor();
       let drop = true;
       await page.route("**/v1/commands", async (route) => {
@@ -175,6 +180,58 @@ test(
         "Response loss and browser reload do not duplicate an accepted message",
       );
       await page.unroute("**/v1/commands");
+      await page.getByRole("link", { name: "note.txt ↗", exact: true }).click();
+      await page
+        .getByRole("dialog")
+        .getByText("Attachment fixture.", { exact: true })
+        .waitFor();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "⚙ Settings" }).click();
+      await page.getByLabel("Appearance").selectOption("dark");
+      assert.equal(
+        await page.locator("html").getAttribute("data-theme"),
+        "dark",
+      );
+      await page.keyboard.press("Escape");
+      await page.reload();
+      assert.equal(
+        await page.locator("html").getAttribute("data-theme"),
+        "dark",
+      );
+      assert.equal(
+        await page
+          .getByText("Reading position protected", { exact: true })
+          .count(),
+        0,
+      );
+      await page
+        .getByRole("button", { name: "Artifacts", exact: true })
+        .click();
+      await page
+        .getByRole("button")
+        .filter({ has: page.getByText("note.txt", { exact: true }) })
+        .click();
+      await page
+        .getByRole("dialog")
+        .getByText("Attachment fixture.", { exact: true })
+        .waitFor();
+      await page.keyboard.press("Escape");
+      await page
+        .getByRole("button")
+        .filter({ has: page.getByText("sandbox.html", { exact: true }) })
+        .click();
+      await page
+        .frameLocator(".artifact-reader iframe")
+        .getByText("Parent access blocked", { exact: false })
+        .waitFor();
+      assert.equal(
+        await page.locator("body").getAttribute("data-escaped"),
+        null,
+      );
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Context", exact: true }).click();
+      await page.getByLabel("Context session").waitFor();
+      await page.getByRole("button", { name: "Work", exact: true }).click();
       await page.locator(".sidebar").focus();
       await page.keyboard.press("Alt+ArrowRight");
       await page.waitForTimeout(100);

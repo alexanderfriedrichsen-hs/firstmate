@@ -3,6 +3,13 @@ import { createRoot } from "react-dom/client";
 import type { Ticket, Conversation } from "../contracts.ts";
 import { useReading, engagePanel } from "./scroll.ts";
 import "./style.css";
+import {
+  ArtifactReader,
+  ArtifactLibrary,
+  ContextBrowser,
+  SkillsBrowser,
+  openArtifact,
+} from "./library.tsx";
 import { usePanelWidth } from "./panels.ts";
 let csrf = "";
 async function api(url: string, options: RequestInit = {}) {
@@ -68,6 +75,30 @@ function App() {
   const [context, setContext] = useState<"ticket" | "worker">("ticket");
   const [modal, setModal] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [artifactId, setArtifactId] = useState<string>();
+  const [firstmateHistory, setFirstmateHistory] = useState<string>();
+  const [theme, setTheme] = useState(localStorage.getItem("theme") ?? "system");
+  useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme =
+        theme === "system" ? (media.matches ? "dark" : "light") : theme;
+    };
+    localStorage.setItem("theme", theme);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+  useEffect(() => {
+    const show = (event: Event) => setArtifactId((event as CustomEvent).detail);
+    const current = () => setFirstmateHistory(undefined);
+    window.addEventListener("artifact.open", show);
+    window.addEventListener("firstmate.current", current);
+    return () => {
+      window.removeEventListener("artifact.open", show);
+      window.removeEventListener("firstmate.current", current);
+    };
+  }, []);
   const [error, setError] = useState("");
   const [humanFold, setHumanFold] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -145,7 +176,11 @@ function App() {
   if (!snapshot) return <div className="loading">Opening your workspace…</div>;
   const tickets: Ticket[] = snapshot.tickets;
   const conversations: Conversation[] = snapshot.conversations;
-  const supervisor = conversations.find((c) => c.role === "supervisor");
+  const currentFirstmate = conversations.find(
+    (c) => c.role === "supervisor" && !c.retiredAt,
+  );
+  const supervisor =
+    conversations.find((c) => c.id === firstmateHistory) ?? currentFirstmate;
   const ticket = tickets.find((t) => t.id === selected);
   const worker =
     conversations.find(
@@ -223,6 +258,19 @@ function App() {
           >
             Archive
           </button>
+          {[
+            ["skills", "Skills"],
+            ["context", "Context"],
+            ["artifacts", "Artifacts"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              className={view === id ? "active" : ""}
+              onClick={() => navigate(id)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         <div className="section-title">
           <h1>Your work</h1>
@@ -318,7 +366,13 @@ function App() {
         {view === "work" ? (
           <>
             {supervisor ? (
-              <Chat key={supervisor.id} conversation={supervisor} act={act} />
+              <Chat
+                key={supervisor.id}
+                conversation={supervisor}
+                act={act}
+                history={conversations.filter((c) => c.role === "supervisor")}
+                selectHistory={setFirstmateHistory}
+              />
             ) : (
               <div className="welcome">
                 <div className="eyebrow">YOUR LOCAL WORKSPACE</div>
@@ -327,7 +381,7 @@ function App() {
                   <br />A clear view of the work.
                 </h2>
                 <p>
-                  Your supervisor coordinates managed tickets, follows up on
+                  Your Firstmate coordinates managed tickets, follows up on
                   results, and brings decisions back to you.
                 </p>
                 <div className="notice">
@@ -344,6 +398,32 @@ function App() {
           </>
         ) : view === "dashboards" ? (
           <Dashboard version={snapshot.sequence} />
+        ) : view === "skills" ? (
+          <SkillsBrowser
+            conversations={conversations}
+            api={api}
+            useSkill={(c, skill) => {
+              localStorage.setItem(
+                "skills:" + c.id,
+                JSON.stringify([{ name: skill.name, path: skill.path }]),
+              );
+              if (!localStorage.getItem("draft:" + c.id))
+                localStorage.setItem(
+                  "draft:" + c.id,
+                  "Use $" + skill.name + " to ",
+                );
+              if (c.ticketId) {
+                setSelected(c.ticketId);
+                setSelectedConversation(c.id);
+                setContext("worker");
+              } else setFirstmateHistory(c.id);
+              navigate("work");
+            }}
+          />
+        ) : view === "context" ? (
+          <ContextBrowser api={api} />
+        ) : view === "artifacts" ? (
+          <ArtifactLibrary api={api} />
         ) : (
           <div className="page">
             <div className="eyebrow">RETAINED HISTORY</div>
@@ -550,6 +630,11 @@ function App() {
           </form>
         </Modal>
       )}
+      {artifactId && (
+        <Modal title="Artifact" close={() => setArtifactId(undefined)}>
+          <ArtifactReader key={artifactId} id={artifactId} api={api} />
+        </Modal>
+      )}
       {settings && (
         <Modal title="Workspace settings" close={() => setSettings(false)}>
           {snapshot.legacyExternalChanges?.requiresReconciliation && (
@@ -559,6 +644,18 @@ function App() {
               . Your app ticket state remains authoritative.
             </div>
           )}
+          <label>
+            Appearance
+            <select
+              aria-label="Appearance"
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+            >
+              <option value="system">System</option>
+              <option value="light">Vaporwave · light</option>
+              <option value="dark">Vaporwave · dark</option>
+            </select>
+          </label>
           <label className="checkbox">
             <input
               type="checkbox"
@@ -572,6 +669,11 @@ function App() {
           <p className="help">
             Uses your existing provider authentication. No account billing
             settings change.
+          </p>
+          <p className="help">
+            Managed tickets notify Firstmate automatically when dispatch is
+            enabled and control is returned. Take over interrupts the current
+            turn and keeps automatic input paused even if you close the browser.
           </p>
           <h3>Cursor</h3>
           <div className="notice">{snapshot.capabilities.cursor.reason}</div>
@@ -630,7 +732,9 @@ function ProviderForm({
           required
         />
       </label>
-      <button className="primary">Start {role}</button>
+      <button className="primary">
+        Start {role === "supervisor" ? "Firstmate" : "worker"}
+      </button>
     </form>
   );
 }
@@ -702,9 +806,13 @@ function Modal({
 function Chat({
   conversation: outer,
   act,
+  history,
+  selectHistory,
 }: {
   conversation: Conversation;
   act: Function;
+  history?: Conversation[];
+  selectHistory?: (id: string) => void;
 }) {
   const [data, setData] = useState<any>();
   const [draft, setDraft] = useState(
@@ -727,6 +835,13 @@ function Chat({
       );
     } catch {
       return null;
+    }
+  });
+  const [skills, setSkills] = useState<any[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("skills:" + outer.id) ?? "[]");
+    } catch {
+      return [];
     }
   });
   const [chatError, setChatError] = useState("");
@@ -832,6 +947,7 @@ function Chat({
         payload: {
           text: draft.trim() ? draft : "Please review the attached files.",
           attachments: attachments.map((a) => a.id),
+          skills,
         },
       };
       localStorage.setItem("pending-send:" + c.id, JSON.stringify(envelope));
@@ -850,6 +966,8 @@ function Chat({
       );
       setAttachments(remaining);
       localStorage.setItem("attachments:" + c.id, JSON.stringify(remaining));
+      setSkills([]);
+      localStorage.removeItem("skills:" + c.id);
       setPendingSend(null);
       localStorage.removeItem("pending-send:" + c.id);
       setChatError("");
@@ -910,21 +1028,37 @@ function Chat({
       <header className="chat-header">
         <div>
           <h2>
-            {c.role === "supervisor" ? "Supervisor" : "Worker conversation"}
+            {c.role === "supervisor" ? "Firstmate" : "Worker conversation"}
           </h2>
           <small>
             {c.provider} · {c.model} <span className="state">{c.state}</span>
           </small>
         </div>
         <div className="chat-actions">
-          {["lost", "failed"].includes(c.state) && (
+          {history && history.length > 1 && (
+            <select
+              aria-label="Firstmate chat history"
+              value={c.id}
+              onChange={(e) => selectHistory?.(e.target.value)}
+            >
+              {history.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.retiredAt
+                    ? "Previous chat · " + h.id.slice(0, 8)
+                    : "Current chat"}
+                </option>
+              ))}
+            </select>
+          )}
+          {!c.retiredAt && <ConversationControls conversation={c} act={act} />}
+          {!c.retiredAt && ["lost", "failed"].includes(c.state) && (
             <button
               onClick={() => act("conversation.resume", {}, c.id, c.version)}
             >
               Resume exact session
             </button>
           )}
-          {c.state === "idle" && c.runnerId && (
+          {!c.retiredAt && c.state === "idle" && c.runnerId && (
             <button
               onClick={() => act("conversation.park", {}, c.id, c.version)}
             >
@@ -933,11 +1067,16 @@ function Chat({
           )}
           <button
             onClick={() => act("conversation.interrupt", {}, c.id, c.version)}
-            disabled={!["running", "waiting_permission"].includes(c.state)}
+            disabled={
+              !!c.retiredAt ||
+              !["running", "waiting_permission"].includes(c.state)
+            }
           >
             Interrupt
           </button>
           <button
+            disabled={!!c.retiredAt}
+            title="Take over interrupts the current turn and pauses automatic input until you return control."
             onClick={() =>
               act(
                 c.inputOwner === "automation"
@@ -1028,8 +1167,11 @@ function Chat({
                   <a
                     key={a.id}
                     className="external-link"
-                    href={"/v1/artifacts/" + a.id}
-                    download={a.name}
+                    href={"#artifact/" + a.id}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openArtifact(a.id);
+                    }}
                   >
                     {a.name} ↗
                   </a>
@@ -1101,10 +1243,15 @@ function Chat({
         )}
         <textarea
           aria-label="Message"
+          disabled={!!c.retiredAt}
           placeholder={
             c.state === "running"
               ? "Queue a follow-up…"
-              : "Message your " + c.role + "…"
+              : c.retiredAt
+                ? "This chat is retained history"
+                : "Message your " +
+                  (c.role === "supervisor" ? "Firstmate" : "worker") +
+                  "…"
           }
           value={draft}
           onChange={(e) => {
@@ -1133,16 +1280,25 @@ function Chat({
               }}
             />
           </label>
-          <small>
-            {c.state === "running"
-              ? "Follow-ups queue until this turn ends."
-              : "⌘ Enter to send"}{" "}
-            · Reading position protected
-          </small>
+          {skills.map((skill) => (
+            <button
+              key={skill.path}
+              className="skill-chip"
+              onClick={() => {
+                setSkills([]);
+                localStorage.removeItem("skills:" + c.id);
+              }}
+              title="Remove selected skill"
+            >
+              ${skill.name} ×
+            </button>
+          ))}
           <button
             className="primary"
             disabled={
-              (!draft.trim() && !attachments.length && !pendingSend) || sending
+              !!c.retiredAt ||
+              (!draft.trim() && !attachments.length && !pendingSend) ||
+              sending
             }
             onClick={() => void send()}
           >
@@ -1167,9 +1323,11 @@ function Activity({ content }: { content: string }) {
       <details>
         <summary>{data.label}</summary>
         <a
-          href={"/v1/artifacts/" + data.artifactId}
-          target="_blank"
-          rel="noreferrer"
+          href={"#artifact/" + data.artifactId}
+          onClick={(e) => {
+            e.preventDefault();
+            openArtifact(data.artifactId);
+          }}
         >
           Open activity artifact ↗
         </a>
@@ -1475,7 +1633,7 @@ function Dashboard({ version }: { version: number }) {
         </select>
       </div>
       <p className="subtle">
-        Supervisor and worker activity, including failed and retried work.
+        Firstmate and worker activity, including failed and retried work.
       </p>
       <div className="metrics">
         <div>
@@ -1487,8 +1645,8 @@ function Dashboard({ version }: { version: number }) {
           <strong>{new Set(all.map((r) => r.model)).size}</strong>
         </div>
         <div>
-          <small>Account allowance</small>
-          <strong className="unavailable">Unavailable</strong>
+          <small>Usage scope</small>
+          <strong>Firstmate</strong>
         </div>
       </div>
       {all.length ? (
@@ -1507,7 +1665,8 @@ function Dashboard({ version }: { version: number }) {
                 <td>
                   <strong>{r.model}</strong>
                   <small>
-                    {r.provider} · {r.role}
+                    {r.provider} ·{" "}
+                    {r.role === "supervisor" ? "Firstmate" : r.role}
                   </small>
                 </td>
                 <td>{r.input.toLocaleString()}</td>
@@ -1530,6 +1689,7 @@ function Dashboard({ version }: { version: number }) {
         This dashboard covers this app's observed activity. Account allowance,
         subscription spend, and unrelated provider activity are separate.
       </div>
+      <AccountDashboard api={api} />
       <h3>Cursor budget</h3>
       <p>
         5,000 input + output tokens per calendar month · America/Los_Angeles ·
@@ -1542,3 +1702,244 @@ function Dashboard({ version }: { version: number }) {
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);
+
+function ConversationControls({
+  conversation: c,
+  act,
+}: {
+  conversation: Conversation;
+  act: Function;
+}) {
+  const [mode, setMode] = useState<"model" | "restart" | null>(null);
+  const [models, setModels] = useState<any[]>([]);
+  const [selected, setSelected] = useState(c.model);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (mode !== "model") return;
+    let live = true;
+    setError("");
+    void api("catalog?topic=models&conversationId=" + c.id)
+      .then((d) => live && setModels(d.data))
+      .catch((e) => live && setError(String(e)));
+    return () => {
+      live = false;
+    };
+  }, [mode, c.id]);
+  return (
+    <>
+      <button
+        disabled={c.state !== "idle" || c.provider !== "codex"}
+        onClick={() => {
+          setSelected(c.model);
+          setMode("model");
+        }}
+      >
+        Model
+      </button>
+      {c.role === "supervisor" && (
+        <button
+          disabled={c.state !== "idle"}
+          onClick={() => setMode("restart")}
+        >
+          New chat
+        </button>
+      )}
+      {mode && (
+        <Modal
+          title={
+            mode === "model" ? "Choose model" : "Start a new Firstmate chat"
+          }
+          close={() => setMode(null)}
+        >
+          {mode === "model" ? (
+            <>
+              <p className="subtle">
+                Applies to the next turn. Your current chat and ticket history
+                stay intact.
+              </p>
+              {error && <p role="alert">{error}</p>}
+              <label>
+                Model
+                <select
+                  aria-label="Firstmate model"
+                  value={selected}
+                  onChange={(e) => setSelected(e.target.value)}
+                >
+                  {!models.length && <option value={c.model}>{c.model}</option>}
+                  {models.map((m) => (
+                    <option key={m.model} value={m.model}>
+                      {m.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="primary"
+                disabled={!models.length || c.state !== "idle"}
+                onClick={async () => {
+                  await act(
+                    "conversation.model",
+                    { model: selected },
+                    c.id,
+                    c.version,
+                  );
+                  setMode(null);
+                }}
+              >
+                Use model
+              </button>
+            </>
+          ) : (
+            <>
+              <p>
+                This creates a fresh native conversation using {c.model}. Your
+                previous chat, tickets, artifacts, and recorded context remain
+                available.
+              </p>
+              <p>
+                Skills stay available through the same provider configuration.
+                Previously loaded skill text isn't copied into the new
+                conversation. Automatic control starts paused for the new chat.
+              </p>
+              <button
+                className="primary"
+                onClick={async () => {
+                  await act("conversation.restart", {}, c.id, c.version);
+                  setMode(null);
+                  window.dispatchEvent(new Event("firstmate.current"));
+                }}
+              >
+                Create new chat
+              </button>
+            </>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+function AccountDashboard({ api }: { api: (url: string) => Promise<any> }) {
+  const [data, setData] = useState<any>();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const load = () => {
+    setLoading(true);
+    setError("");
+    void api("catalog?topic=account")
+      .then(setData)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+  const buckets =
+    data?.limits?.rateLimitsByLimitId ??
+    (data?.limits?.rateLimits ? { codex: data.limits.rateLimits } : {});
+  const recent = (data?.usage?.dailyUsageBuckets ?? []).slice(-14);
+  const max = Math.max(1, ...recent.map((b: any) => b.tokens));
+  return (
+    <section className="account-dashboard">
+      <div className="page-title">
+        <h2>Account & subscription</h2>
+        <button onClick={load} disabled={loading}>
+          {loading ? "Refreshing…" : "Refresh account"}
+        </button>
+      </div>
+      <p className="subtle">
+        Account allowance, subscription spend, and unrelated provider activity.
+        Provider account data is separate from this app's measured runs.
+      </p>
+      {error && <p role="alert">{error}</p>}
+      <div className="account-cards">
+        <div className="account-card">
+          <h3>Account allowance</h3>
+          {Object.entries(buckets).map(([key, value]: [string, any]) => (
+            <div key={key}>
+              <strong>{value.limitName ?? key}</strong>
+              {value.individualLimit?.remainingPercent != null && (
+                <>
+                  <div className="account-number">
+                    {value.individualLimit.remainingPercent}%{" "}
+                    <small>remaining</small>
+                  </div>
+                  <progress
+                    max={100}
+                    value={value.individualLimit.remainingPercent}
+                  />
+                  <p className="subtle">
+                    Resets{" "}
+                    {new Date(
+                      value.individualLimit.resetsAt * 1000,
+                    ).toLocaleString()}
+                  </p>
+                </>
+              )}
+              {[value.primary, value.secondary]
+                .filter(Boolean)
+                .map((w: any, i: number) => (
+                  <p key={i}>
+                    {Math.max(0, 100 - w.usedPercent)}% remaining ·{" "}
+                    {w.windowDurationMins / 60} hour window · resets{" "}
+                    {new Date(w.resetsAt * 1000).toLocaleString()}
+                  </p>
+                ))}
+              {!value.individualLimit && !value.primary && !value.secondary && (
+                <p>Window details unavailable.</p>
+              )}
+            </div>
+          ))}
+          {!Object.keys(buckets).length && (
+            <p>{loading ? "Reading allowance…" : "Unavailable"}</p>
+          )}
+          <small>Codex · signed-in account</small>
+        </div>
+        <div className="account-card">
+          <h3>Subscription spend</h3>
+          <div className="account-number">Unavailable</div>
+          <p className="subtle">
+            {data?.subscriptionSpendReason ??
+              "Subscription invoices aren't exposed by the provider metadata connection."}
+          </p>
+          <p className="subtle">No estimate is presented as a billed charge.</p>
+        </div>
+        <div className="account-card">
+          <h3>Account-wide activity</h3>
+          <div className="account-number">
+            {data?.usage?.summary?.lifetimeTokens?.toLocaleString() ??
+              "Unavailable"}
+          </div>
+          <p className="subtle">
+            Account-wide lifetime tokens, including other Codex clients. The
+            provider doesn't separately identify activity unrelated to this app.
+          </p>
+          <small>Claude and Cursor account activity unavailable</small>
+        </div>
+      </div>
+      {!!recent.length && (
+        <>
+          <h3>Recent account activity</h3>
+          <div className="usage-bars" aria-label="Daily account tokens">
+            {recent.map((b: any) => (
+              <div
+                key={b.startDate}
+                title={
+                  b.startDate + ": " + b.tokens.toLocaleString() + " tokens"
+                }
+              >
+                <span
+                  style={{ height: Math.max(3, (b.tokens / max) * 100) + "%" }}
+                />
+                <small>{b.startDate.slice(5)}</small>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {data && (
+        <p className="subtle">
+          Provider observation: {new Date(data.observedAt).toLocaleString()}.
+          Metadata refreshes are cached for one minute.
+        </p>
+      )}
+    </section>
+  );
+}

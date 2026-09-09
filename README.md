@@ -74,7 +74,7 @@ bin/fm-local.mjs start
 
 Open `http://127.0.0.1:43170`.
 Dispatch starts paused.
-In **Settings**, enable dispatch when you want the supervisor or workers to run.
+In **Settings**, enable dispatch when you want Firstmate or workers to run.
 **Human only** tickets remain outside agent API results, scheduling, dependencies with managed tickets, and compatibility exports.
 
 To configure continuous integration (CI) evidence, pass `--required-checks "check name,another check"` to `setup`.
@@ -93,10 +93,31 @@ bin/fm-local.mjs stop --json
 ```
 
 `stop` preserves provider runners.
+After updating runner code, park and resume an existing conversation to load the new controls.
 **Take over** pauses automated conversation input and requests interruption.
 Once idle, **Park** stops that runner.
 **Resume exact session** retains its provider conversation ID and refuses to start while the old runner or provider still lives.
 Unknown delivery outcomes remain visible and block duplicate dispatch.
+
+Creating a **Managed** ticket queues an automatic wake.
+Firstmate picks it up when dispatch is enabled, its conversation is idle, and you have returned control to automation.
+**Take over** retains your input ownership until you select **Return control**, even after you close the browser.
+To switch the Codex model for future turns, select **Model** in an idle conversation with no pending input.
+To start fresh, select **New chat** in Firstmate.
+Previous chat history and tickets remain available, and the new chat starts under your control.
+Installed skills remain discoverable from the same workspace; old conversation context does not carry over.
+Skills that require legacy terminal orchestration still need adaptation to the native app runtime.
+
+Use **Skills** to search and read the native catalog or add an explicit skill to your next message.
+Use **Context** to inspect captured launch instructions, prepared skill inputs, and provider-reported Markdown reads by session.
+Provider-internal reads and unrecorded older context are not observable.
+Use **Artifacts** or a file link in chat to open collected reports, images, HTML, and PDFs inside the app.
+The runtime collects supported files from each session's `outputs` directory and recent assistant links inside its workspace after a turn.
+HTML previews run in an isolated frame without network access.
+**Dashboards** separates Firstmate usage from available Codex account allowance and account-wide activity.
+Subscription invoices and a separate count of unrelated activity are unavailable from provider metadata.
+In **Settings > Appearance**, choose system, vaporwave light, or vaporwave dark.
+
 
 To inspect legacy state, use a separate isolated home and `import --source /absolute/path/to/legacy-home`.
 Import reads backlog and targeted metadata and status files without running legacy scripts.

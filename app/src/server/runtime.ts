@@ -6,6 +6,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Store } from "./store.ts";
+import { recordContext, collectOutputs, recordNativeReads } from "./library.ts";
 import { observeLegacy } from "./legacy-observer.ts";
 import { launchDraft, collectDraft } from "./drafts.ts";
 import { collectReview, reviewSchema } from "./review.ts";
@@ -140,6 +141,17 @@ export class Runtime {
             await this.launch(c!);
           else if (c) {
             const p = JSON.parse(job.payload);
+            p.model = c.model;
+            for (const skill of p.skills ?? []) {
+              recordContext(
+                this.store,
+                c,
+                path.basename(skill.path),
+                fs.readFileSync(skill.path, "utf8"),
+                "Prepared explicit skill input for dispatch; provider acceptance is recorded in the turn history",
+                skill.path,
+              );
+            }
             if (p.attachments)
               p.attachments = p.attachments.map((id: string) => {
                 const record = this.store.db
@@ -400,7 +412,7 @@ export class Runtime {
     if (this.store.setting("policy").paused) return;
     const supervisor = this.store
       .conversations(internal)
-      .find((c) => c.role === "supervisor");
+      .find((c) => c.role === "supervisor" && !c.retiredAt);
     if (
       !supervisor ||
       supervisor.state !== "idle" ||
@@ -567,14 +579,22 @@ export class Runtime {
     const instructions =
       "You are a Firstmate " +
       c.role +
-      ". Work only within the assigned workspace and explicit authorization. Never merge, request reviewers, mark PRs ready, change Linear status, or change account billing without a matching user action. Report concise outcomes and evidence. A completed turn does not complete a ticket. Preserve normal project instructions. Do not inspect any other Firstmate home. " +
+      ". Work only within the assigned workspace and explicit authorization. Never merge, request reviewers, mark PRs ready, change Linear status, or change account billing without a matching user action. Report concise outcomes and evidence. A completed turn does not complete a ticket. Save user-facing reports, Markdown, images, HTML, and PDFs under the outputs/ directory in this workspace; Firstmate imports them into the app after each turn. Preserve normal project instructions. Do not inspect any other Firstmate home. " +
       (c.role === "supervisor"
         ? "Use the scoped Firstmate agent CLI to inspect managed tickets and submit commands. Human-only records are unavailable."
         : "") +
       ` Agent CLI: ${process.execPath} --import ${loader} ${cli}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.`;
+    recordContext(
+      this.store,
+      c,
+      "firstmate-session-instructions.md",
+      instructions,
+      "App instructions supplied at native session initialization",
+    );
     atomic(
       path.join(dir, "config.json"),
       JSON.stringify({
+        runnerProtocol: 2,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
@@ -796,6 +816,7 @@ export class Runtime {
         );
       }
       if (p.method === "item/completed" && item) {
+        recordNativeReads(this.store, c, item);
         if (item.type === "agentMessage")
           this.store.message(
             c.id,
@@ -888,6 +909,16 @@ export class Runtime {
         }
       }
       if (p.type === "assistant") {
+        for (const block of p.message.content ?? [])
+          if (
+            block.type === "tool_use" &&
+            block.name === "Read" &&
+            /\.md$/i.test(block.input?.file_path ?? "")
+          )
+            this.store.setting(
+              "context-read:" + c.id + ":" + block.id,
+              block.input.file_path,
+            );
         const mid = p.message.id ?? p.uuid;
         const text = (p.message.content ?? [])
           .filter((b: any) => b.type === "text")
@@ -903,6 +934,23 @@ export class Runtime {
             mid,
           );
       }
+      if (p.type === "user")
+        for (const block of p.message?.content ?? []) {
+          const file = this.store.setting(
+            "context-read:" + c.id + ":" + block.tool_use_id,
+          );
+          if (block.type === "tool_result" && !block.is_error && file)
+            recordContext(
+              this.store,
+              c,
+              path.basename(file),
+              typeof block.content === "string"
+                ? block.content
+                : JSON.stringify(block.content),
+              "Provider-reported Markdown read result; may be partial",
+              file,
+            );
+        }
       if (p.type === "result") {
         c.state = "idle";
         this.settle(
@@ -955,6 +1003,7 @@ export class Runtime {
     );
   }
   settle(c: Conversation, state: string, errorClass?: string) {
+    collectOutputs(this.store, c);
     if (!c.ticketId) return;
     if (c.stage === "review" && state === "succeeded") {
       try {
