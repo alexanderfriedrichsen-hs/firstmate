@@ -104,7 +104,7 @@ export class Store {
         paused: true,
       });
   }
-  requireCurrentRunner(c: Conversation) {
+  requireCurrentRunner(c: Conversation, minimum = 2) {
     if (!c.runnerId) return;
     const file = path.join(
       this.home,
@@ -116,9 +116,9 @@ export class Store {
     const config = fs.existsSync(file)
       ? JSON.parse(fs.readFileSync(file, "utf8"))
       : {};
-    if (config.runnerProtocol !== 2)
+    if ((config.runnerProtocol ?? 0) < minimum)
       throw new Conflict(
-        "Park and resume the exact session to load model and skill controls in this older runner.",
+        "Park and resume the exact session to load model, effort, and skill controls in this older runner.",
       );
   }
   setting(key: string, value?: unknown): any {
@@ -491,7 +491,21 @@ export class Store {
         if (c.type === "conversation.model") {
           if (conv.provider !== "codex")
             throw new Conflict("Model switching currently requires Codex.");
-          this.requireCurrentRunner(conv);
+          this.requireCurrentRunner(conv, p.effort ? 3 : 2);
+          if (p.effort) {
+            const model = (this.setting("modelCatalog") ?? []).find(
+              (m: any) => m.model === p.model,
+            );
+            if (
+              !model?.supportedReasoningEfforts.some(
+                (e: any) => e.reasoningEffort === p.effort,
+              )
+            )
+              throw new Conflict("Unsupported thinking effort for this model.");
+          }
+          conv.effort = p.effort
+            ? z.string().max(40).parse(p.effort)
+            : undefined;
           conv.model = z.string().min(1).max(128).parse(p.model);
         } else {
           if (conv.role !== "supervisor")
@@ -503,6 +517,7 @@ export class Store {
             id: randomUUID(),
             provider: conv.provider,
             model: conv.model,
+            effort: conv.effort,
             role: "supervisor",
             cwd: conv.cwd,
             incarnation: 0,

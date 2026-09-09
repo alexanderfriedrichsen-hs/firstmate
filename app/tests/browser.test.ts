@@ -76,6 +76,46 @@ test(
       await page
         .getByRole("heading", { name: "Firstmate", exact: true })
         .waitFor();
+      await page.route("**/v1/catalog?topic=models&conversationId=*", (route) =>
+        route.fulfill({
+          json: {
+            data: [
+              {
+                model: "fixture",
+                displayName: "Fixture",
+                defaultReasoningEffort: "high",
+                supportedReasoningEfforts: [
+                  { reasoningEffort: "high", description: "More thinking" },
+                  { reasoningEffort: "low", description: "Less thinking" },
+                ],
+              },
+              {
+                model: "small",
+                displayName: "Small",
+                defaultReasoningEffort: "low",
+                supportedReasoningEfforts: [
+                  { reasoningEffort: "low", description: "Less thinking" },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await page.getByLabel("Thinking effort").selectOption("high");
+      await page.getByLabel("Firstmate model").selectOption("small");
+      assert.equal(await page.getByLabel("Thinking effort").inputValue(), "");
+      assert.equal(
+        await page
+          .getByLabel("Thinking effort")
+          .locator('option[value="high"]')
+          .count(),
+        0,
+      );
+      await page.keyboard.press("Escape");
+      await page
+        .getByRole("button", { name: "Pause automatic work", exact: true })
+        .waitFor();
       await page.locator(".message").first().waitFor();
       assert.ok(
         (await page.locator(".message").count()) <= 100,
@@ -259,6 +299,42 @@ test(
       );
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "hidden" });
+      const reviewTicket = store.command(
+        { kind: "user", id: "test" },
+        {
+          commandId: randomUUID(),
+          type: "ticket.create",
+          payload: { title: "Review notification fixture" },
+        },
+      ).ticket;
+      store.putTicket({ ...reviewTicket, status: "awaiting_decision" });
+      store.event("ticket.updated", reviewTicket.id, {}, reviewTicket.id);
+      await page
+        .getByRole("button", {
+          name: "1 tickets need your review",
+          exact: true,
+        })
+        .waitFor();
+      await page
+        .getByRole("button", {
+          name: "1 tickets need your review",
+          exact: true,
+        })
+        .click();
+      await page
+        .getByRole("heading", {
+          name: "Review notification fixture",
+          exact: true,
+        })
+        .waitFor();
+      store.putTicket({ ...reviewTicket, status: "completed" });
+      store.event("ticket.updated", reviewTicket.id, {}, reviewTicket.id);
+      await page
+        .getByRole("button", {
+          name: "0 tickets need your review",
+          exact: true,
+        })
+        .waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "Open navigation" }).click();
       await page

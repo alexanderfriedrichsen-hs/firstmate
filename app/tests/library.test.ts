@@ -36,13 +36,19 @@ function fixture() {
 test("model changes preserve native history and new chat retires the old chat exactly once", () => {
   const { s, c, close } = fixture();
   try {
+    s.setting("modelCatalog", [
+      {
+        model: "new",
+        supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+      },
+    ]);
     s.message(c.id, "old-message", "assistant", "Keep this history", "message");
     s.command(user, {
       commandId: randomUUID(),
       type: "conversation.model",
       targetId: c.id,
       expectedVersion: 1,
-      payload: { model: "new" },
+      payload: { model: "new", effort: "high" },
     });
     assert.equal(s.conversation(c.id, user).model, "new");
     const cmd = {
@@ -59,6 +65,7 @@ test("model changes preserve native history and new chat retires the old chat ex
     const next = all.find((x) => !x.retiredAt)!;
     assert.equal(next.previousConversationId, c.id);
     assert.equal(next.model, "new");
+    assert.equal(next.effort, "high");
     assert.equal(next.cwd, c.cwd);
     assert.equal(next.inputOwner, "test");
     assert.equal(next.providerId, undefined);
@@ -194,6 +201,29 @@ test("older runners cannot silently ignore model and skill controls", () => {
           payload: { model: "new" },
         }),
       /Park and resume/,
+    );
+    assert.equal(s.conversation(c.id, user).model, "old");
+  } finally {
+    close();
+  }
+});
+
+test("unsupported effort is rejected without changing the conversation", () => {
+  const { s, c, close } = fixture();
+  try {
+    s.setting("modelCatalog", [
+      { model: "new", supportedReasoningEfforts: [{ reasoningEffort: "low" }] },
+    ]);
+    assert.throws(
+      () =>
+        s.command(user, {
+          commandId: randomUUID(),
+          type: "conversation.model",
+          targetId: c.id,
+          expectedVersion: 1,
+          payload: { model: "new", effort: "high" },
+        }),
+      /Unsupported thinking effort/,
     );
     assert.equal(s.conversation(c.id, user).model, "old");
   } finally {

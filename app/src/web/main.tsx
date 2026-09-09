@@ -54,7 +54,7 @@ const labels: Record<string, string> = {
   normal: "Normal",
   low: "Low",
   active: "Checking",
-  awaiting_decision: "Your decision",
+  awaiting_decision: "Needs your review",
   queued: "Queued",
   backlog: "Backlog",
   completed: "Completed",
@@ -200,7 +200,7 @@ function App() {
       ),
     },
     {
-      name: "Your decision",
+      name: "Needs your review",
       tickets: tickets.filter(
         (t) =>
           t.handling === "agent_managed" && t.status === "awaiting_decision",
@@ -272,6 +272,24 @@ function App() {
             </button>
           ))}
         </nav>
+        <button
+          className="review-notification"
+          aria-label={`${groups[1].tickets.length} tickets need your review`}
+          onClick={() => {
+            const ticket = groups[1].tickets[0];
+            if (ticket) {
+              setSelected(ticket.id);
+              setContext("ticket");
+              navigate("work");
+            }
+          }}
+          disabled={!groups[1].tickets.length}
+        >
+          <span>Needs your review</span>
+          <span className="notification-count" role="status">
+            {groups[1].tickets.length}
+          </span>
+        </button>
         <div className="section-title">
           <h1>Your work</h1>
           <button
@@ -672,8 +690,10 @@ function App() {
           </p>
           <p className="help">
             Managed tickets notify Firstmate automatically when dispatch is
-            enabled and control is returned. Take over interrupts the current
-            turn and keeps automatic input paused even if you close the browser.
+            enabled and automatic work is enabled in its chat. Pause automatic
+            work interrupts that conversation and switches it to manual
+            messages. Other workers continue. Dispatch is the workspace-wide
+            switch.
           </p>
           <h3>Cursor</h3>
           <div className="notice">{snapshot.capabilities.cursor.reason}</div>
@@ -1031,7 +1051,9 @@ function Chat({
             {c.role === "supervisor" ? "Firstmate" : "Worker conversation"}
           </h2>
           <small>
-            {c.provider} · {c.model} <span className="state">{c.state}</span>
+            {c.provider} · {c.model}
+            {c.effort ? " · " + c.effort + " effort" : ""}{" "}
+            <span className="state">{c.state}</span>
           </small>
         </div>
         <div className="chat-actions">
@@ -1076,7 +1098,7 @@ function Chat({
           </button>
           <button
             disabled={!!c.retiredAt}
-            title="Take over interrupts the current turn and pauses automatic input until you return control."
+            title="Pause interrupts this conversation and blocks automatic input. Other workers continue. You can still send messages yourself."
             onClick={() =>
               act(
                 c.inputOwner === "automation"
@@ -1088,7 +1110,9 @@ function Chat({
               )
             }
           >
-            {c.inputOwner === "automation" ? "Take over" : "Return control"}
+            {c.inputOwner === "automation"
+              ? "Pause automatic work"
+              : "Enable automatic work"}
           </button>
         </div>
       </header>
@@ -1104,7 +1128,13 @@ function Chat({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {c.inputOwner !== "automation" && <small>You're in control</small>}
+        <small className="control-explanation">
+          {c.retiredAt
+            ? "Previous chat · read only"
+            : c.inputOwner === "automation"
+              ? "Automatic: picks up Managed work when dispatch is enabled. You can still chat."
+              : "Manual: waits for your messages. Automatic work in this chat is paused; other workers can continue."}
+        </small>
       </div>
       <div
         ref={read.ref}
@@ -1713,6 +1743,7 @@ function ConversationControls({
   const [mode, setMode] = useState<"model" | "restart" | null>(null);
   const [models, setModels] = useState<any[]>([]);
   const [selected, setSelected] = useState(c.model);
+  const [effort, setEffort] = useState(c.effort ?? "");
   const [error, setError] = useState("");
   useEffect(() => {
     if (mode !== "model") return;
@@ -1731,6 +1762,7 @@ function ConversationControls({
         disabled={c.state !== "idle" || c.provider !== "codex"}
         onClick={() => {
           setSelected(c.model);
+          setEffort(c.effort ?? "");
           setMode("model");
         }}
       >
@@ -1763,7 +1795,10 @@ function ConversationControls({
                 <select
                   aria-label="Firstmate model"
                   value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
+                  onChange={(e) => {
+                    setSelected(e.target.value);
+                    setEffort("");
+                  }}
                 >
                   {!models.length && <option value={c.model}>{c.model}</option>}
                   {models.map((m) => (
@@ -1773,13 +1808,45 @@ function ConversationControls({
                   ))}
                 </select>
               </label>
+              <label>
+                Thinking effort
+                <select
+                  aria-label="Thinking effort"
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                  disabled={!models.length}
+                >
+                  <option value="">
+                    Model default (
+                    {models.find((m) => m.model === selected)
+                      ?.defaultReasoningEffort ?? "loading"}
+                    )
+                  </option>
+                  {(
+                    models.find((m) => m.model === selected)
+                      ?.supportedReasoningEfforts ?? []
+                  ).map((e: any) => (
+                    <option key={e.reasoningEffort} value={e.reasoningEffort}>
+                      {e.reasoningEffort}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="subtle">
+                {models
+                  .find((m) => m.model === selected)
+                  ?.supportedReasoningEfforts.find(
+                    (e: any) => e.reasoningEffort === effort,
+                  )?.description ??
+                  "The provider chooses the default effort for this model."}
+              </p>
               <button
                 className="primary"
                 disabled={!models.length || c.state !== "idle"}
                 onClick={async () => {
                   await act(
                     "conversation.model",
-                    { model: selected },
+                    { model: selected, effort },
                     c.id,
                     c.version,
                   );

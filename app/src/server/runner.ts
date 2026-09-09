@@ -293,6 +293,7 @@ async function handle(req: any) {
         ],
         clientUserMessageId: req.messageId,
         model: req.model ?? config.model,
+        effort: req.effort ?? config.effort,
         outputSchema: config.outputSchema,
         sandboxPolicy:
           config.stage === "review"

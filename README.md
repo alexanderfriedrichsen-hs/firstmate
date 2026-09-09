@@ -94,15 +94,17 @@ bin/fm-local.mjs stop --json
 
 `stop` preserves provider runners.
 After updating runner code, park and resume an existing conversation to load the new controls.
-**Take over** pauses automated conversation input and requests interruption.
+**Pause automatic work** pauses automated conversation input and requests interruption.
 Once idle, **Park** stops that runner.
 **Resume exact session** retains its provider conversation ID and refuses to start while the old runner or provider still lives.
 Unknown delivery outcomes remain visible and block duplicate dispatch.
 
 Creating a **Managed** ticket queues an automatic wake.
 Firstmate picks it up when dispatch is enabled, its conversation is idle, and you have returned control to automation.
-**Take over** retains your input ownership until you select **Return control**, even after you close the browser.
+**Pause automatic work** retains your input ownership until you select **Enable automatic work**, even after you close the browser.
 To switch the Codex model for future turns, select **Model** in an idle conversation with no pending input.
+Choose a supported **Thinking effort** or use the model default; both settings apply to future turns.
+The sidebar **Needs your review** badge counts tickets awaiting your decision and opens the first one.
 To start fresh, select **New chat** in Firstmate.
 Previous chat history and tickets remain available, and the new chat starts under your control.
 Installed skills remain discoverable from the same workspace; old conversation context does not carry over.

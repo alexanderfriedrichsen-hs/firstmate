@@ -41,6 +41,7 @@ export type Conversation = {
   provider: "codex" | "claude";
   providerId?: string;
   model: string;
+  effort?: string;
   role: string;
   cwd: string;
   runnerId?: string;

@@ -1177,3 +1177,39 @@ select:focus-visible {
     padding: 10px;
   }
 }
+
+.review-notification {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px;
+  padding: 12px;
+  border-color: var(--pink);
+}
+.notification-count {
+  background: var(--pink);
+  color: var(--on-accent);
+  border-radius: 999px;
+  min-width: 24px;
+  padding: 3px 7px;
+  text-align: center;
+  font-weight: 700;
+}
+.control-explanation {
+  max-width: 580px;
+  text-align: right;
+  line-height: 1.5;
+}
+@media (max-width: 700px) {
+  .search-row {
+    flex-wrap: wrap;
+  }
+  .control-explanation {
+    text-align: left;
+  }
+}
+.modal select {
+  width: 100%;
+  max-width: 100%;
+}

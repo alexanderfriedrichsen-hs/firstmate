@@ -142,6 +142,7 @@ export class Runtime {
           else if (c) {
             const p = JSON.parse(job.payload);
             p.model = c.model;
+            p.effort = c.effort;
             for (const skill of p.skills ?? []) {
               recordContext(
                 this.store,
@@ -594,12 +595,13 @@ export class Runtime {
     atomic(
       path.join(dir, "config.json"),
       JSON.stringify({
-        runnerProtocol: 2,
+        runnerProtocol: 3,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
         providerId: c.providerId,
         model: c.model,
+        effort: c.effort,
         cwd: c.cwd,
         executable,
         socket,

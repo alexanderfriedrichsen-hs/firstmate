@@ -115,6 +115,21 @@ export function serve(store: Store, port: number) {
               return send(400, {
                 error: "Choose an available model from the provider catalog.",
               });
+            const selected = catalog.data.find(
+              (m: any) => m.model === command.payload.model,
+            );
+            const effort =
+              command.payload.effort || selected.defaultReasoningEffort;
+            if (
+              !selected.supportedReasoningEfforts.some(
+                (e: any) => e.reasoningEffort === effort,
+              )
+            )
+              return send(400, {
+                error: "Choose a supported thinking effort for this model.",
+              });
+            command.payload.effort = effort;
+            store.setting("modelCatalog", catalog.data);
           }
           const result = store.command(actor, command);
           return send(202, {
