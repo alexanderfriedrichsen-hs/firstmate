@@ -1,0 +1,39 @@
+{
+  "name": "firstmate-local",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.16.0"
+  },
+  "scripts": {
+    "dev": "tsx app/src/server/cli.ts start",
+    "start": "tsx app/src/server/cli.ts start",
+    "app": "tsx app/src/server/cli.ts",
+    "build": "vite build --config app/vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test app/tests/*.test.ts",
+    "protocol": "codex app-server generate-ts --out app/src/protocol",
+    "pretest": "npm run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.263",
+    "@toon-format/toon": "4.1.1",
+    "better-sqlite3": "13.0.3",
+    "fs-ext": "2.1.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/fs-ext": "2.0.3",
+    "@types/node": "26.4.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "prettier": "3.9.6",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  }
+}

@@ -16,6 +16,10 @@
 # Diagnostics print to stderr prefixed by ${FM_LOCK_LOG_PREFIX:-fm-lock} so each
 # caller's output stays recognizable.
 
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 fm_lock_log() {
   echo "${FM_LOCK_LOG_PREFIX:-fm-lock}: $*" >&2
 }

@@ -3,6 +3,10 @@
 #
 # Usage:
 #   fm-install-shellcheck.sh <destination-directory>
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

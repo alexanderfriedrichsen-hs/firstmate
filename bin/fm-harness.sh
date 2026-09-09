@@ -20,6 +20,10 @@
 # name and is never parsed for a model.
 # Detection layers: verified environment markers first, then process ancestry.
 # Record each newly verified env marker here.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -26,6 +26,10 @@
 # an accepted limitation, no worse than the existing fact that a task's
 # recorded absolute worktree path does not survive a move either.
 
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_BACKEND_HOMETAG_SECONDMATE_MARKER=".fm-secondmate-home"
 
 fm_backend_hometag() {

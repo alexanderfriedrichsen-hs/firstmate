@@ -34,6 +34,10 @@
 
 # Field separator for the normalized record. A literal TAB; every field is
 # scrubbed of TAB/newline by the producer so the record is exactly five fields.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_TRANSITION_FIELD_SEP=$'\t'
 
 # fm_transition_record: THE constructor for a normalized transition record.

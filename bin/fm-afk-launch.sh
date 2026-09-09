@@ -43,6 +43,10 @@
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
 # placeholder instead of a real daemon. FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND
 # override the captured captain pane/backend (an isolated lab pane in tests).
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 FM_AFK_LAUNCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -594,11 +598,20 @@ fm_afk_launch_stop() {
 }
 
 fm_afk_launch_main() {
-  local result
-  fm_afk_launch_lock_acquire || return 1
+  local result fm_afk_pending_signal=0
+  # Defer signals while publishing the lock identity so cleanup can identify
+  # our lock even when TERM arrives immediately after mkdir succeeds.
+  trap 'fm_afk_pending_signal=130' INT
+  trap 'fm_afk_pending_signal=143' TERM
+  if ! fm_afk_launch_lock_acquire; then
+    trap - INT TERM
+    [ "$fm_afk_pending_signal" -eq 0 ] || exit "$fm_afk_pending_signal"
+    return 1
+  fi
   trap fm_afk_launch_lock_release EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  [ "$fm_afk_pending_signal" -eq 0 ] || exit "$fm_afk_pending_signal"
   case "${1:-start}" in
     start) fm_afk_launch_start ;;
     start-native) fm_afk_launch_start_native ;;

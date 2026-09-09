@@ -16,3 +16,9 @@ config/backend
 config/x-mode.env
 config/cmux-socket-password
 config/wedge-alarm
+node_modules/
+app/dist/
+app/.test-data/
+treehouse.toml
+app/owner.lock
+app/control-mode

@@ -44,6 +44,10 @@
 # below and reused by every backend adapter so the decision cannot drift.
 
 # shellcheck source=bin/fm-composer-lib.sh
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 
 # Busy footers per harness (mirror fm-watch.sh). claude/codex: "esc to

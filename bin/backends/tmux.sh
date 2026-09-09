@@ -19,6 +19,10 @@
 # its submit core under the backend's naming convention rather than
 # duplicating it, so the two consumers cannot drift apart.
 # shellcheck source=bin/fm-tmux-lib.sh
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 . "$FM_BACKEND_LIB_DIR/fm-tmux-lib.sh"
 
 # fm_backend_tmux_resolve_bare_selector: the live-window-listing fallback for a

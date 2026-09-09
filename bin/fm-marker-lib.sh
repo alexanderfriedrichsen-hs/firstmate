@@ -42,6 +42,10 @@
 
 # The label field: human-readable, greppable, and distinctive enough that the
 # captain would not type it by hand. This is the part the secondmate's LLM reads.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_FROMFIRST_LABEL='[fm-from-firstmate]'
 
 # The full marker fm-send prepends to a from-firstmate request: the label, then

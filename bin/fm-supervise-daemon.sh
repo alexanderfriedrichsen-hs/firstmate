@@ -137,6 +137,10 @@
 #          SIGTERM/SIGINT shut down within ~1s, flush escalations, release the
 #          lock. A crashing fm-watch.sh is logged and restarted, never killing
 #          the daemon; a tight crash-restart spin is detected and backed off.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 FM_DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

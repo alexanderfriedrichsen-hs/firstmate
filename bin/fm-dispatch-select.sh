@@ -29,6 +29,10 @@
 # quota-balanced uses quota-axi --json unless --quota-json supplies a fixture.
 # FM_DISPATCH_QUOTA_AXI overrides the quota command.
 # FM_DISPATCH_STALE_CLEAR_MARGIN overrides the default 20 point stale margin.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 STALE_CLEAR_MARGIN=${FM_DISPATCH_STALE_CLEAR_MARGIN:-20}

@@ -11,6 +11,10 @@
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 fm_tasks_axi_version_parts() {
   local output
   command -v tasks-axi >/dev/null 2>&1 || return 1

@@ -168,14 +168,24 @@ test_lock_single_winner_under_concurrency() {
       . "$1"
       if fm_lock_try_acquire "$2"; then
         printf "%s\n" "$$" >> "$3"
-        # Stay alive so the held lock names a live pid for the whole window;
-        # otherwise a late contender could legitimately reclaim a dead-pid lock.
-        sleep 1
+        touch "$3.attempt.$$"
+        while [ ! -e "$3.release" ]; do sleep 0.05; done
+      else
+        touch "$3.attempt.$$"
       fi
     ' _ "$LIB" "$lockdir" "$marker" &
     pids="$pids $!"
     i=$((i + 1))
   done
+  # Hold the winner until every contender has attempted acquisition.
+  # A wall-clock sleep can end before a slow contender even starts.
+  i=0
+  while [ "$(find "$dir" -name 'wins.attempt.*' | wc -l | tr -d ' ')" -lt 40 ] && [ "$i" -lt 400 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  touch "$marker.release"
+  [ "$i" -lt 400 ] || fail "lock contenders did not all reach acquisition"
   for pid in $pids; do
     wait "$pid" 2>/dev/null || true
   done
@@ -220,12 +230,24 @@ test_lock_stale_steal_single_winner_under_concurrency() {
       . "$1"
       if fm_lock_try_acquire "$2"; then
         printf "%s\n" "${BASHPID:-$$}" >> "$3"
-        sleep 1
+        touch "$3.attempt.$$"
+        while [ ! -e "$3.release" ]; do sleep 0.05; done
+      else
+        touch "$3.attempt.$$"
       fi
     ' _ "$LIB" "$lockdir" "$marker" &
     pids="$pids $!"
     i=$((i + 1))
   done
+  # Hold the winner until every contender has attempted acquisition.
+  # A wall-clock sleep can end before a slow contender even starts.
+  i=0
+  while [ "$(find "$dir" -name 'wins.attempt.*' | wc -l | tr -d ' ')" -lt 40 ] && [ "$i" -lt 400 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  touch "$marker.release"
+  [ "$i" -lt 400 ] || fail "lock contenders did not all reach acquisition"
   for pid in $pids; do
     wait "$pid" 2>/dev/null || true
   done

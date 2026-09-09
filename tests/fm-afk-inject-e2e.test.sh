@@ -386,7 +386,13 @@ test_scenario_c() {
   start_daemon
 
   echo "done: PR https://example.test/pr/300" > "$STATE_DIR/fake-c1.status"
-  sleep 6
+  # Wait for the submitted digest, then allow another poll to expose duplicates.
+  local ticks=0
+  while ! grep -q 'Supervisor escalate' "$LOG_FILE" && [ "$ticks" -lt 100 ]; do
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  sleep 2
 
   # Exactly one digest line in the submitted log (no duplicate, no loss).
   local digest_count

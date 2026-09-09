@@ -60,6 +60,10 @@
 
 # The exit code every refusal uses, distinct enough to recognize in a caller or
 # test as "the gate refusal fired" rather than an ordinary usage error.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_GATE_REFUSE_EXIT=3
 
 # fm_refuse_if_gate_agent: exit FM_GATE_REFUSE_EXIT with a clear stderr message if

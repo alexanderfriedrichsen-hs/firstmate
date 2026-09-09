@@ -18,6 +18,10 @@
 # "firstmate:0" is a tmux session:window name, so the bare fallback (nothing
 # configured, nothing detected) assumes tmux - matching the daemon's pre-herdr
 # behavior byte-for-byte when run outside both tmux and herdr.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_SUPERVISOR_TARGET_DEFAULT="firstmate:0"
 FM_SUPERVISOR_BACKEND_DEFAULT="tmux"
 

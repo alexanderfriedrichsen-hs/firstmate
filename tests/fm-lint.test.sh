@@ -22,7 +22,9 @@ CI="$ROOT/.github/workflows/ci.yml"
 NM="$ROOT/.no-mistakes.yaml"
 INSTALLER="$ROOT/bin/fm-install-shellcheck.sh"
 # The authoritative file set the one owner must run.
-CANON='shellcheck --norc bin/*.sh bin/backends/*.sh tests/*.sh'
+# Match the literal variable reference in the owning script.
+# shellcheck disable=SC2016
+CANON='"$SHELLCHECK_BIN" --norc bin/*.sh bin/backends/*.sh tests/*.sh'
 # The pinned version, read from the single source (the one owner itself).
 REQUIRED=$("$LINT" --required-version)
 
@@ -45,7 +47,9 @@ test_owner_defines_canonical_set() {
   # that would hide findings CI fails on.
   assert_no_grep '--severity' "$LINT" "fm-lint.sh must not lower severity below the CI default"
   assert_no_grep '--exclude' "$LINT" "fm-lint.sh must not blanket-exclude checks CI enforces"
-  [ "$(grep -Fc 'exec shellcheck --norc' "$LINT")" -eq 2 ] || fail "both lint modes must ignore ambient ShellCheck configuration"
+  # Match source text without expanding the runner variable.
+  # shellcheck disable=SC2016
+  [ "$(grep -Fc  'exec "$SHELLCHECK_BIN" --norc'  "$LINT")" -eq 2 ] || fail "both lint modes must ignore ambient ShellCheck configuration"
   pass "fm-lint.sh is the sole authoritative definition at CI-default severity"
 }
 
@@ -73,6 +77,8 @@ test_ci_installs_and_logs_the_pinned_version() {
   # CI must derive the version from the one owner (never hardcode a divergent
   # number) and log the resolved version as parity evidence.
   assert_grep "VERSION=\"\$(\"\$ROOT/bin/fm-lint.sh\" --required-version)\"" "$INSTALLER" "installer must read the version fm-lint.sh pins"
+  # Match source text without expanding the runner variable.
+  # shellcheck disable=SC2016
   [ "$(grep -Fc "bin/fm-install-shellcheck.sh \"\$RUNNER_TEMP/bin\"" "$CI")" -eq 2 ] || fail "both CI jobs must use the shared ShellCheck installer"
   assert_grep "ACTUAL_SHA256=\$(sha256sum" "$INSTALLER" "installer must calculate the ShellCheck archive checksum"
   assert_grep "[ \"\$ACTUAL_SHA256\" = \"\$SHA256\" ]" "$INSTALLER" "installer must verify the ShellCheck archive checksum"

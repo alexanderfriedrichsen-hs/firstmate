@@ -28,6 +28,10 @@
 # POST body stays {request_id}), a "DRY RUN" summary is printed to stderr, and
 # stdout still echoes the request_id with exit 0. Dry-run needs neither a token
 # nor the relay.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

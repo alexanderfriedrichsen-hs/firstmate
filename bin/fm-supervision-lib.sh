@@ -10,6 +10,10 @@
 # live watcher lock check in bin/fm-wake-lib.sh.
 
 # Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 fm_sup_stat_mtime() {
   if [ "$(uname)" = Darwin ]; then
     stat -f %m "$1" 2>/dev/null

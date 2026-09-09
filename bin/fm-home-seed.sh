@@ -29,6 +29,10 @@
 #   fm-home-seed.sh validate
 #       Refuse duplicate ids, duplicate homes, and nested or overlapping homes in
 #       data/secondmates.md.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

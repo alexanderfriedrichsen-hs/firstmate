@@ -24,6 +24,10 @@
 # default branch, so the fast-forward advances HEAD only and never moves the
 # shared default branch or any other worktree's checkout.
 
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 SUB_HOME_MARKER="${SUB_HOME_MARKER:-.fm-secondmate-home}"
 
 # --- helpers ---------------------------------------------------------------

@@ -50,6 +50,10 @@
 # leading "export ", surrounding whitespace, and one layer of matching single or
 # double quotes. Prints nothing (and succeeds) when the file or key is absent, so
 # callers can treat empty output as "unset".
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 fmx_env_get() {
   local key=$1 file=$2 line val
   [ -f "$file" ] || return 0

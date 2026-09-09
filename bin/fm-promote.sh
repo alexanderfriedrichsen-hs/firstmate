@@ -7,6 +7,10 @@
 # intended fix changes, create branch fm/<task-id>, implement, then report done
 # according to the project's delivery mode).
 # Usage: fm-promote.sh <task-id>
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

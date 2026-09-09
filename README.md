@@ -54,6 +54,70 @@ Launching a supported harness inside it instantiates your first mate - and makes
 
 Full detail on every feature lives in [docs/architecture.md](docs/architecture.md).
 
+## Run the localhost app in an isolated home
+
+The localhost app is under development.
+It uses native Codex App Server conversations, subscription-authenticated Claude workers, SQLite write-ahead logging, and separate Treehouse leases for workers, checks, and reviews.
+The browser is a client of the durable runtime.
+Closing it does not cancel accepted work.
+
+To try the app, use Node.js 24.16 or later, an authenticated Codex CLI, Treehouse, and a non-live source clone.
+Run these commands from this checkout:
+
+```sh
+npm ci
+npm run build
+export FM_HOME=/absolute/path/to/isolated-firstmate-home
+bin/fm-local.mjs setup --source /absolute/path/to/non-live-source --port 43170
+bin/fm-local.mjs start
+```
+
+Open `http://127.0.0.1:43170`.
+Dispatch starts paused.
+In **Settings**, enable dispatch when you want the supervisor or workers to run.
+**Human only** tickets remain outside agent API results, scheduling, dependencies with managed tickets, and compatibility exports.
+
+To configure continuous integration (CI) evidence, pass `--required-checks "check name,another check"` to `setup`.
+A PR with unknown required checks cannot satisfy CI readiness.
+Review and validation results belong to a specific clean Git revision.
+Editing the source, moving the head or base, or receiving blocking feedback invalidates readiness.
+An idle provider turn does not complete a ticket.
+
+Use these commands to manage an isolated runtime:
+
+```sh
+bin/fm-local.mjs status --json
+bin/fm-local.mjs pause --paused true --json
+bin/fm-local.mjs backup --output /absolute/path/to/backup.sqlite --json
+bin/fm-local.mjs stop --json
+```
+
+`stop` preserves provider runners.
+**Take over** pauses automated conversation input and requests interruption.
+Once idle, **Park** stops that runner.
+**Resume exact session** retains its provider conversation ID and refuses to start while the old runner or provider still lives.
+Unknown delivery outcomes remain visible and block duplicate dispatch.
+
+To inspect legacy state, use a separate isolated home and `import --source /absolute/path/to/legacy-home`.
+Import reads backlog and targeted metadata and status files without running legacy scripts.
+Shadow mode cannot start provider sessions or enable dispatch.
+Reimport preserves IDs and reports competing local edits.
+`rollback --output /absolute/path/to/export-directory` exports current managed history and keeps Human only records in a separate user-only file.
+To prepare a transfer report, run `cutover --source /absolute/path/to/legacy-home --json` from the paused staging home.
+Only an explicitly approved report ID can execute the transfer with `--approve-report <id>`.
+The destination requires a completed transfer receipt and `--transferred-home`; ordinary development commands still refuse the canonical live home.
+Rollback exports current history and does not release ownership or restart legacy supervision.
+
+Codex streaming, permission replies, takeover, exact resume, native worker dispatch, and independent revision-bound review have isolated integration coverage.
+Claude worker startup, exact-session resume, streaming, permission presentation, and interruption have isolated coverage.
+Permission approval and supervisor rollout remain gated; the latest probe stopped when rate-limit fields disagreed about overage usage.
+Cursor stays unavailable because an account-bound hard cap of 5,000 input plus output tokens per calendar month has not been proven enforceable.
+
+To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.
+The browser test uses an installed Chrome and a 10,000-message isolated fixture.
+Raw provider journals and local validation fixtures belong under ignored data directories.
+Generated protocol types come from `npm run protocol`; edit their generator inputs or adapter code instead of editing those types.
+
 ## Quick Start
 
 ### Requirements

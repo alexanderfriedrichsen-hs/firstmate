@@ -7,6 +7,10 @@
 # adapter forces one same-session follow-up by running `grok --resume <session>`
 # with a guard instruction. GROK_TURNEND_GUARD_ACTIVE is the loop guard: the
 # nested turn's own Stop hook exits without spawning another nested turn.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 PAYLOAD=$(cat 2>/dev/null || true)

@@ -27,6 +27,7 @@ install_cd_scripts() {
   local dir=$1
   mkdir -p "$dir/bin"
   cp "$ROOT/bin/fm-cd-pretool-check.sh" "$dir/bin/fm-cd-pretool-check.sh"
+  cp "$ROOT/bin/fm-app-fence-lib.sh" "$dir/bin/fm-app-fence-lib.sh"
   cp "$ROOT/bin/fm-cd-command-policy.mjs" "$dir/bin/fm-cd-command-policy.mjs"
   cp "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/fm-arm-command-policy.mjs"
   chmod +x "$dir/bin/fm-cd-pretool-check.sh" "$dir/bin/fm-cd-command-policy.mjs"
@@ -302,7 +303,7 @@ test_fail_open_unparseable_json() {
 test_fail_open_missing_node() {
   local fakebin tool tool_path out rc
   fakebin=$(fm_fakebin "$TMP_ROOT/nonode")
-  for tool in bash sh git dirname cat printf sed tr jq; do
+  for tool in bash sh git dirname cat printf sed tr jq mkdir; do
     tool_path=$(command -v "$tool") || continue
     ln -s "$tool_path" "$fakebin/$tool"
   done
@@ -316,7 +317,7 @@ test_fail_open_missing_node() {
 test_fail_open_missing_jq_on_stdin() {
   local fakebin tool tool_path out rc
   fakebin=$(fm_fakebin "$TMP_ROOT/nojq")
-  for tool in bash sh git dirname cat printf sed tr node; do
+  for tool in bash sh git dirname cat printf sed tr node mkdir; do
     tool_path=$(command -v "$tool") || continue
     ln -s "$tool_path" "$fakebin/$tool"
   done
@@ -335,7 +336,7 @@ test_prefilter_skips_node_without_cd_substring() {
   make_primary_fixture "$dir" >/dev/null
   fakebin=$(fm_fakebin "$TMP_ROOT/prefilter-fake")
   marker="$TMP_ROOT/prefilter-node-called"
-  for tool in bash sh git dirname cat printf sed tr jq; do
+  for tool in bash sh git dirname cat printf sed tr jq mkdir; do
     tool_path=$(command -v "$tool") || continue
     ln -s "$tool_path" "$fakebin/$tool"
   done
@@ -436,7 +437,7 @@ test_pi_wiring() {
 
 test_scripts_are_shellcheck_clean() {
   command -v shellcheck >/dev/null 2>&1 || { pass "shellcheck not installed, skipping"; return; }
-  shellcheck "$ROOT/bin/fm-cd-pretool-check.sh" >/dev/null 2>&1 \
+  shellcheck -x "$ROOT/bin/fm-cd-pretool-check.sh" >/dev/null 2>&1 \
     || fail "bin/fm-cd-pretool-check.sh is not shellcheck-clean"
   pass "bin/fm-cd-pretool-check.sh is shellcheck-clean"
 }

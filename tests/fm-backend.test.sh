@@ -122,6 +122,7 @@ build_old_bin() {  # <name> -> echoes root dir (root/bin/<script> is the entry p
     ln -s "$ROOT/bin/$f" "$bin/$f"
   done
   ln -s "$ROOT/bin/backends" "$bin/backends"
+  ln -s "$ROOT/bin/fm-app-fence-lib.sh" "$bin/fm-app-fence-lib.sh"
   for f in $OLD_BIN_REFACTORED; do
     git -C "$ROOT" show "$BASE_REF:bin/$f" > "$bin/$f"
     chmod +x "$bin/$f"

@@ -375,7 +375,7 @@ test_failopen_missing_jq() {
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
   local tool
-  for tool in bash grep sed tr; do
+  for tool in bash grep sed tr mkdir dirname; do
     real=$(command -v "$tool")
     ln -sf "$real" "$fakebin/$tool"
   done
@@ -390,7 +390,7 @@ test_failopen_missing_node() {
   dir=$(fm_test_tmproot fm-arm-pretool-node)
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
-  for tool in bash dirname; do
+  for tool in bash dirname mkdir; do
     real=$(command -v "$tool")
     ln -sf "$real" "$fakebin/$tool"
   done
@@ -529,7 +529,7 @@ test_pi_extension_carries_pretool_check() {
 
 test_shellcheck_clean() {
   command -v shellcheck >/dev/null 2>&1 || { pass "shellcheck not installed, skipping"; return; }
-  shellcheck "$CHECK" >/dev/null 2>&1 || fail "bin/fm-arm-pretool-check.sh is not shellcheck-clean"
+  shellcheck -x "$CHECK" >/dev/null 2>&1 || fail "bin/fm-arm-pretool-check.sh is not shellcheck-clean"
   pass "bin/fm-arm-pretool-check.sh is shellcheck-clean"
 }
 

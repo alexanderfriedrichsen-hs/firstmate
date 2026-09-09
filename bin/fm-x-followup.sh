@@ -55,6 +55,10 @@
 # The window is FMX_FOLLOWUP_MAX_AGE_SECS (default 604800, 7 days). The cap is
 # FMX_FOLLOWUP_MAX_COUNT (default 3). FMX_NOW_OVERRIDE pins "now" for
 # deterministic tests. Meta read/write lives in fm-x-lib.sh.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

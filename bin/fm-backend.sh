@@ -46,6 +46,10 @@
 # does not change the loop's behavior. The pull primitives also stay available
 # on their own for on-demand reads (fm-peek.sh, fm-crew-state.sh).
 
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 FM_BACKEND_SCRIPT=${BASH_SOURCE[0]:-$0}
 FM_BACKEND_LIB_DIR="$(cd "$(dirname "$FM_BACKEND_SCRIPT")" && pwd)"
 unset FM_BACKEND_SCRIPT

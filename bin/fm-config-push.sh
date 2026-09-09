@@ -8,6 +8,10 @@
 # propagate_inheritable_config machinery as bootstrap, but deliberately does not
 # fast-forward tracked files and does not nudge running secondmates.
 # Warnings-only skips exit 0; real propagation errors exit non-zero.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -u
 
 usage() {

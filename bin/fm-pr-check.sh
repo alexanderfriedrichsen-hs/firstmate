@@ -4,6 +4,10 @@
 # state/<id>.check.sh, which prints one line iff the PR is merged (the watcher's
 # check contract: output = wake firstmate, silence = keep sleeping).
 # Usage: fm-pr-check.sh <task-id> <pr-url>
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

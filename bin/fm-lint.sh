@@ -35,6 +35,10 @@
 # Exit status is ShellCheck's own on a lint run, so a caller (CI or the gate)
 # fails exactly when ShellCheck reports a finding; a version mismatch or a
 # missing ShellCheck fails before linting with a distinct message.
+# shellcheck source=bin/fm-app-fence-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fm-app-fence-lib.sh" || exit 3
+fm_app_require_legacy || exit 3
+
 set -eu
 
 # The single source of the pinned ShellCheck version. Bump here and CI follows
