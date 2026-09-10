@@ -1276,3 +1276,28 @@ select:focus-visible {
 .slash-menu [role="option"] small {
   display: block;
 }
+.heartbeat-status {
+  margin: 24px 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.heartbeat-status h3 {
+  margin: 0;
+}
+.heartbeat-times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.heartbeat-times dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.heartbeat-times dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.heartbeat-attention {
+  color: var(--accent);
+}

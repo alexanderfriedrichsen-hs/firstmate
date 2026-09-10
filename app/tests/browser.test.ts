@@ -610,6 +610,47 @@ test(
         })
         .waitFor({ state: "hidden" });
       assert.equal(store.setting("policy").cursor.mode, "subscription_usage");
+      const heartbeatInterval = page.getByLabel("Check every (minutes)");
+      await heartbeatInterval.fill("121");
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Save heartbeat", exact: true })
+          .isDisabled(),
+        true,
+      );
+      await heartbeatInterval.fill("2");
+      await page.getByLabel("Enable heartbeat", { exact: true }).check();
+      await page.route("**/v1/commands", (route) =>
+        route.fulfill({
+          status: 409,
+          json: { error: "Heartbeat settings could not be saved" },
+        }),
+      );
+      await page
+        .getByRole("button", { name: "Save heartbeat", exact: true })
+        .click();
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "Heartbeat settings could not be saved" })
+        .waitFor();
+      assert.equal(await heartbeatInterval.inputValue(), "2");
+      await page.unroute("**/v1/commands");
+      await page
+        .getByRole("button", { name: "Save heartbeat", exact: true })
+        .click();
+      await page
+        .getByText("Heartbeat settings saved.", { exact: true })
+        .waitFor();
+      assert.equal(store.setting("heartbeat").enabled, true);
+      assert.equal(store.setting("heartbeat").intervalMinutes, 2);
+      await page.getByLabel("Enable heartbeat", { exact: true }).uncheck();
+      await page
+        .getByRole("button", { name: "Save heartbeat", exact: true })
+        .click();
+      await page
+        .getByText("Heartbeat settings saved.", { exact: true })
+        .waitFor();
+      assert.equal(store.setting("heartbeat").enabled, false);
       await page.getByLabel("Appearance").selectOption("dark");
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
@@ -920,6 +961,34 @@ test(
         ),
         true,
       );
+      await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.clock.install({ time: new Date() });
+      store.setting("heartbeat", {
+        enabled: true,
+        intervalMinutes: 10,
+        lastTickAt: new Date().toISOString(),
+        lastCheckAt: new Date().toISOString(),
+        nextCheckAt: new Date(Date.now() + 600000).toISOString(),
+        issues: [],
+        summary: "Dispatch is paused.",
+      });
+      store.event("heartbeat.updated", "heartbeat", {});
+      await page
+        .getByRole("button", { name: "Dashboards", exact: true })
+        .click();
+      await page
+        .getByRole("region", { name: "Heartbeat status" })
+        .getByText("Paused", { exact: true })
+        .waitFor();
+      await page.clock.fastForward(75000);
+      await page
+        .getByRole("region", { name: "Heartbeat status" })
+        .getByText("Heartbeat overdue", { exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "Heartbeat needs attention", exact: true })
+        .waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

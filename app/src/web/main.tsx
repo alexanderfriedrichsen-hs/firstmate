@@ -13,6 +13,12 @@ import {
 import { usePanelWidth } from "./panels.ts";
 import { ProviderSettings } from "./providers.tsx";
 import { UserQuestions } from "./questions.tsx";
+import {
+  HeartbeatSettings,
+  useHeartbeatHealth,
+  HeartbeatStatus,
+  type Heartbeat,
+} from "./heartbeat.tsx";
 let csrf = "";
 async function api(url: string, options: RequestInit = {}) {
   let res = await fetch("/v1/" + url, options);
@@ -66,6 +72,7 @@ function App() {
   const sidebarWidth = usePanelWidth("navigation", 256, 220, 360);
   const contextWidth = usePanelWidth("context", 338, 280, 600);
   const [snapshot, setSnapshot] = useState<any>();
+  const heartbeatHealth = useHeartbeatHealth(snapshot?.heartbeat);
   const [view, setView] = useState(
     location.hash.startsWith("#message/") ||
       location.hash.startsWith("#ticket/")
@@ -359,6 +366,15 @@ function App() {
           ))}
         </div>
         <footer>
+          {snapshot.heartbeat &&
+            ["attention", "stale"].includes(heartbeatHealth ?? "") && (
+              <button
+                onClick={() => navigate("dashboards")}
+                className="heartbeat-attention"
+              >
+                Heartbeat needs attention
+              </button>
+            )}
           <button onClick={() => setSettings(true)}>⚙ Settings</button>
           <span className="status-dot">
             {snapshot.policy.paused ? "Dispatch paused" : "Runtime connected"}
@@ -411,6 +427,7 @@ function App() {
           <Dashboard
             version={snapshot.sequence}
             cursor={snapshot.policy.cursor}
+            heartbeat={snapshot.heartbeat}
           />
         ) : view === "skills" ? (
           <SkillsBrowser
@@ -687,6 +704,13 @@ function App() {
             messages. Other workers continue. Dispatch is the workspace-wide
             switch.
           </p>
+          <HeartbeatSettings
+            heartbeat={snapshot.heartbeat}
+            save={async (value) => {
+              await command("heartbeat.configure", value);
+              await refresh();
+            }}
+          />
           <ProviderSettings
             api={api}
             cursor={snapshot.policy.cursor}
@@ -1892,7 +1916,15 @@ function TicketDetail({
     </div>
   );
 }
-function Dashboard({ version, cursor }: { version: number; cursor: any }) {
+function Dashboard({
+  version,
+  cursor,
+  heartbeat,
+}: {
+  version: number;
+  cursor: any;
+  heartbeat?: Heartbeat;
+}) {
   const [data, setData] = useState<any>();
   const [period, setPeriod] = useState("30");
   useEffect(() => {
@@ -2011,6 +2043,7 @@ function Dashboard({ version, cursor }: { version: number; cursor: any }) {
         This dashboard covers this app's observed activity. Account allowance,
         subscription spend, and unrelated provider activity are separate.
       </div>
+      <HeartbeatStatus heartbeat={heartbeat} />
       <AccountDashboard api={api} />
       <h3>Cursor subscription</h3>
       <p>
