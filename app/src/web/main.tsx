@@ -11,6 +11,7 @@ import {
   openArtifact,
 } from "./library.tsx";
 import { usePanelWidth } from "./panels.ts";
+import { ProviderSettings } from "./providers.tsx";
 let csrf = "";
 async function api(url: string, options: RequestInit = {}) {
   let res = await fetch("/v1/" + url, options);
@@ -695,11 +696,20 @@ function App() {
             messages. Other workers continue. Dispatch is the workspace-wide
             switch.
           </p>
-          <h3>Cursor</h3>
-          <div className="notice">{snapshot.capabilities.cursor.reason}</div>
-          <p className="help">
-            Development home. Live ownership has not transferred.
-          </p>
+          <ProviderSettings
+            api={api}
+            cursorReason={snapshot.capabilities.cursor.reason}
+            post={(url) =>
+              api(url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-CSRF-Token": csrf,
+                },
+                body: "{}",
+              })
+            }
+          />
         </Modal>
       )}
     </div>
@@ -715,49 +725,92 @@ function ProviderForm({
   act: Function;
 }) {
   const [provider, setProvider] = useState("codex");
+  const [models, setModels] = useState<any[]>([]);
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setModels([]);
+    setModel("");
+    setEffort("");
+    setError("");
+    void api("catalog?topic=models&provider=" + provider)
+      .then((result) => {
+        if (!live) return;
+        setModels(result.data);
+        setModel(result.data[0]?.model ?? "");
+      })
+      .catch((e) => live && setError(String(e)));
+    return () => {
+      live = false;
+    };
+  }, [provider]);
   return (
     <form
       className="provider-form"
       onSubmit={(e) => {
         e.preventDefault();
-        const f = new FormData(e.currentTarget);
         void act("conversation.create", {
           provider,
           role,
           ticketId,
-          model: f.get("model"),
+          model,
+          effort,
         });
       }}
     >
       <label>
         Provider
         <select value={provider} onChange={(e) => setProvider(e.target.value)}>
-          <option value="codex">Codex · native</option>
-          <option value="claude" disabled={role === "supervisor"}>
-            Claude ·{" "}
-            {role === "supervisor"
-              ? "worker controls under verification"
-              : "native worker"}
-          </option>
+          <option value="codex">Codex</option>
+          <option value="claude">Claude</option>
+          <option value="cursor">Cursor</option>
+        </select>
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <label>
+        Model
+        <select
+          value={model}
+          disabled={!models.length}
+          onChange={(e) => {
+            setModel(e.target.value);
+            setEffort("");
+          }}
+        >
+          {!models.length && <option value="">No models loaded</option>}
+          {models.map((m) => (
+            <option key={m.model} value={m.model}>
+              {m.displayName}
+            </option>
+          ))}
         </select>
       </label>
       <label>
-        Model
-        <input
-          key={provider}
-          name="model"
-          defaultValue={
-            provider === "codex" ? "gpt-5.6-sol" : "claude-sonnet-4-6"
-          }
-          required
-        />
+        Thinking effort
+        <select value={effort} onChange={(e) => setEffort(e.target.value)}>
+          <option value="">Model default</option>
+          {(
+            models.find((m) => m.model === model)?.supportedReasoningEfforts ??
+            []
+          ).map((e: any) => (
+            <option key={e.reasoningEffort} value={e.reasoningEffort}>
+              {e.reasoningEffort}
+            </option>
+          ))}
+        </select>
       </label>
-      <button className="primary">
+      <p className="help">
+        Sign in through Settings &gt; Providers before starting work.
+      </p>
+      <button className="primary" disabled={!model}>
         Start {role === "supervisor" ? "Firstmate" : "worker"}
       </button>
     </form>
   );
 }
+
 function Modal({
   title,
   close,
@@ -1760,24 +1813,38 @@ function ConversationControls({
   const [mode, setMode] = useState<"model" | "restart" | null>(null);
   const [models, setModels] = useState<any[]>([]);
   const [selected, setSelected] = useState(c.model);
+  const [provider, setProvider] = useState(c.provider);
   const [effort, setEffort] = useState(c.effort ?? "");
   const [error, setError] = useState("");
   useEffect(() => {
-    if (mode !== "model") return;
+    if (!mode) return;
+    setModels([]);
     let live = true;
     setError("");
-    void api("catalog?topic=models&conversationId=" + c.id)
-      .then((d) => live && setModels(d.data))
+    void api(
+      "catalog?topic=models&conversationId=" + c.id + "&provider=" + provider,
+    )
+      .then((d) => {
+        if (live) {
+          setModels(d.data);
+          setSelected((current) =>
+            d.data.some((m: any) => m.model === current)
+              ? current
+              : (d.data[0]?.model ?? ""),
+          );
+        }
+      })
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [mode, c.id]);
+  }, [mode, c.id, provider]);
   return (
     <>
       <button
-        disabled={c.state !== "idle" || c.provider !== "codex"}
+        disabled={c.state !== "idle"}
         onClick={() => {
+          setProvider(c.provider);
           setSelected(c.model);
           setEffort(c.effort ?? "");
           setMode("model");
@@ -1788,7 +1855,12 @@ function ConversationControls({
       {c.role === "supervisor" && (
         <button
           disabled={c.state !== "idle"}
-          onClick={() => setMode("restart")}
+          onClick={() => {
+            setProvider(c.provider);
+            setSelected(c.model);
+            setEffort(c.effort ?? "");
+            setMode("restart");
+          }}
         >
           New chat
         </button>
@@ -1852,14 +1924,17 @@ function ConversationControls({
               <p className="subtle">
                 {models
                   .find((m) => m.model === selected)
-                  ?.supportedReasoningEfforts.find(
+                  ?.supportedReasoningEfforts?.find(
                     (e: any) => e.reasoningEffort === effort,
                   )?.description ??
                   "The provider chooses the default effort for this model."}
               </p>
               <button
                 className="primary"
-                disabled={!models.length || c.state !== "idle"}
+                disabled={
+                  !models.some((m) => m.model === selected) ||
+                  c.state !== "idle"
+                }
                 onClick={async () => {
                   await act(
                     "conversation.model",
@@ -1876,19 +1951,82 @@ function ConversationControls({
           ) : (
             <>
               <p>
-                This creates a fresh native conversation using {c.model}. Your
-                previous chat, tickets, artifacts, and recorded context remain
-                available.
+                This creates a fresh native conversation with the selected
+                provider. Your previous chat, tickets, artifacts, and recorded
+                context remain available.
               </p>
+              <label>
+                Provider
+                <select
+                  aria-label="New chat provider"
+                  value={provider}
+                  onChange={(e) => {
+                    setProvider(e.target.value as Conversation["provider"]);
+                    setSelected("");
+                    setEffort("");
+                  }}
+                >
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                  <option value="cursor">Cursor</option>
+                </select>
+              </label>
+              {error && <p role="alert">{error}</p>}
+              <label>
+                Model
+                <select
+                  aria-label="New chat model"
+                  value={selected}
+                  disabled={!models.length}
+                  onChange={(e) => {
+                    setSelected(e.target.value);
+                    setEffort("");
+                  }}
+                >
+                  {!models.length && <option value="">No models loaded</option>}
+                  {models.map((m) => (
+                    <option key={m.model} value={m.model}>
+                      {m.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Thinking effort
+                <select
+                  aria-label="New chat thinking effort"
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                >
+                  <option value="">Model default</option>
+                  {(
+                    models.find((m) => m.model === selected)
+                      ?.supportedReasoningEfforts ?? []
+                  ).map((e: any) => (
+                    <option key={e.reasoningEffort} value={e.reasoningEffort}>
+                      {e.reasoningEffort}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <p>
-                Skills stay available through the same provider configuration.
-                Previously loaded skill text isn't copied into the new
-                conversation. Automatic control starts paused for the new chat.
+                Skills follow the selected provider's configuration. Previously
+                loaded skill text isn't copied into the new conversation.
+                Automatic control starts paused for the new chat.
               </p>
               <button
                 className="primary"
+                disabled={
+                  !models.some((m) => m.model === selected) ||
+                  c.state !== "idle"
+                }
                 onClick={async () => {
-                  await act("conversation.restart", {}, c.id, c.version);
+                  await act(
+                    "conversation.restart",
+                    { provider, model: selected, effort },
+                    c.id,
+                    c.version,
+                  );
                   setMode(null);
                   window.dispatchEvent(new Event("firstmate.current"));
                 }}

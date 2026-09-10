@@ -1213,3 +1213,23 @@ select:focus-visible {
   width: 100%;
   max-width: 100%;
 }
+
+.provider-settings {
+  margin-top: 24px;
+}
+.provider-card {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.provider-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.provider-heading span {
+  color: var(--muted);
+  font-size: 12px;
+}

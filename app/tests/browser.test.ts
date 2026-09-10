@@ -113,6 +113,22 @@ test(
         0,
       );
       await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await page.getByLabel("New chat provider").selectOption("claude");
+      await page.getByLabel("New chat model").selectOption("small");
+      await page.getByLabel("New chat thinking effort").selectOption("low");
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Create new chat", exact: true })
+          .isDisabled(),
+        false,
+      );
+      await page.getByLabel("New chat provider").selectOption("cursor");
+      assert.equal(
+        await page.getByLabel("New chat thinking effort").inputValue(),
+        "",
+      );
+      await page.keyboard.press("Escape");
       await page
         .getByRole("button", { name: "Pause automatic work", exact: true })
         .waitFor();
@@ -226,7 +242,75 @@ test(
         .getByText("Attachment fixture.", { exact: true })
         .waitFor();
       await page.keyboard.press("Escape");
+      let loginPending = false;
+      let signedIn = false;
+      const providerStatus = () => ({
+        provider: "claude",
+        installed: true,
+        authenticated: signedIn,
+        message: loginPending
+          ? "Complete sign-in in your browser."
+          : signedIn
+            ? "Claude account connected."
+            : "Sign in to Claude.",
+        login: {
+          state: loginPending ? "pending" : signedIn ? "succeeded" : "idle",
+        },
+      });
+      await page.route("**/v1/providers", (route) =>
+        route.fulfill({
+          json: {
+            providers: [
+              providerStatus(),
+              {
+                provider: "cursor",
+                installed: false,
+                authenticated: false,
+                message: "Install Cursor CLI to sign in.",
+                login: { state: "idle" },
+              },
+            ],
+          },
+        }),
+      );
+      await page.route("**/v1/providers/claude/login", (route) => {
+        assert.ok(route.request().headers()["x-csrf-token"]);
+        loginPending = true;
+        return route.fulfill({ json: providerStatus() });
+      });
       await page.getByRole("button", { name: "⚙ Settings" }).click();
+      await page
+        .getByRole("button", { name: "Sign in to Claude", exact: true })
+        .click();
+      await page
+        .getByText("Complete sign-in in your browser.", { exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "Cancel Claude sign-in", exact: true })
+        .waitFor();
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Sign in to Cursor", exact: true })
+          .isDisabled(),
+        true,
+      );
+      signedIn = true;
+      loginPending = false;
+      await page
+        .getByRole("button", { name: "Refresh sign-in status", exact: true })
+        .click();
+      await page
+        .getByText("Claude account connected.", { exact: true })
+        .waitFor();
+      assert.equal(
+        await page
+          .getByText("Development home. Live ownership has not transferred.", {
+            exact: true,
+          })
+          .count(),
+        0,
+      );
+
       await page.getByLabel("Appearance").selectOption("dark");
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
