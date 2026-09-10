@@ -701,7 +701,6 @@ function App() {
           </p>
           <ProviderSettings
             api={api}
-            cursorReason={snapshot.capabilities.cursor.reason}
             cursor={snapshot.policy.cursor}
             enableCursor={() => act("provider.cursor.subscription")}
             post={(url) =>

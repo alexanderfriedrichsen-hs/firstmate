@@ -10,13 +10,11 @@ type ProviderStatus = {
 export function ProviderSettings({
   api,
   post,
-  cursorReason,
   cursor,
   enableCursor,
 }: {
   api: (url: string) => Promise<any>;
   post: (url: string) => Promise<any>;
-  cursorReason: string;
   cursor: any;
   enableCursor: () => Promise<any>;
 }) {
@@ -84,7 +82,13 @@ export function ProviderSettings({
             </span>
           </div>
           <p role="status">{p.message}</p>
-          {p.provider === "cursor" && <p className="help">{cursorReason}</p>}
+          {p.provider === "cursor" && (
+            <p className="help">
+              {cursor?.enabled && cursor?.mode === "subscription_usage"
+                ? "Uses your Cursor subscription. Usage appears when Cursor reports it; the app does not enforce a token cap."
+                : "Enable subscription usage reporting below to use your Cursor account."}
+            </p>
+          )}
           {p.login.state === "pending" ? (
             <button
               disabled={busy === p.provider}
