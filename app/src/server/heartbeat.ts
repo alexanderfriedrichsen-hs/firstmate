@@ -99,7 +99,7 @@ export function configureHeartbeat(
     enabled,
     intervalMinutes,
     nextCheckAt: iso(time + intervalMinutes * 60000),
-    ...(!enabled ? { pendingWakeId: null } : {}),
+    ...(!enabled ? { pendingWakeId: null, reportedIssues: null } : {}),
   });
 }
 export function acknowledgeHeartbeat(
@@ -233,6 +233,7 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
       : undefined;
     if (!existing || ["handled", "cancelled"].includes(existing.state))
       state.pendingWakeId = null;
+    if (!issues.length) state.reportedIssues = null;
     const fingerprint = JSON.stringify(issues);
     // Idle unchanged fleets incur no model turn; active work gets an interval status review.
     if (

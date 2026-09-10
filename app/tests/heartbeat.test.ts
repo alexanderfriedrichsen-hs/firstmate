@@ -268,3 +268,56 @@ test("arm health identifies invalid runners and keeps retained workers observati
     f.close();
   }
 });
+
+test("idle health issues notify again after recovery or explicit retry, without duplicate wakes", () => {
+  const f = fixture();
+  const t = Date.now();
+  try {
+    const c: any = {
+      id: randomUUID(),
+      provider: "codex",
+      model: "test",
+      role: "supervisor",
+      cwd: f.home,
+      incarnation: 1,
+      runnerId: randomUUID(),
+      state: "idle",
+      inputOwner: "automation",
+      version: 1,
+    };
+    f.store.putConversation(c);
+    checkHeartbeat(f.store, t);
+    const first = f.store.setting("heartbeat").pendingWakeId;
+    assert.ok(first);
+    f.store.db
+      .prepare("UPDATE wakes SET state='presented' WHERE id=?")
+      .run(first);
+    f.command("wake.ack", { id: first }, { kind: "supervisor", id: c.id });
+    const runner = c.runnerId;
+    delete c.runnerId;
+    f.store.putConversation(c);
+    checkHeartbeat(f.store, t + 600000);
+    assert.equal(f.store.setting("heartbeat").pendingWakeId, null);
+    c.runnerId = runner;
+    f.store.putConversation(c);
+    checkHeartbeat(f.store, t + 1200000);
+    const recurring = f.store.setting("heartbeat").pendingWakeId;
+    assert.ok(recurring, "same issue after recovery must notify again");
+    assert.notEqual(recurring, first);
+    checkHeartbeat(f.store, t + 1800000);
+    assert.equal(f.store.setting("heartbeat").pendingWakeId, recurring);
+    configureHeartbeat(f.store, false, 10, t + 1800001);
+    configureHeartbeat(f.store, true, 10, t + 1800002);
+    checkHeartbeat(f.store, t + 2400002);
+    const retried = f.store.setting("heartbeat").pendingWakeId;
+    assert.ok(
+      retried,
+      "explicit retry must re-notify unchanged issue-only fleet",
+    );
+    assert.notEqual(retried, recurring);
+    checkHeartbeat(f.store, t + 3000002);
+    assert.equal(f.store.setting("heartbeat").pendingWakeId, retried);
+  } finally {
+    f.close();
+  }
+});
