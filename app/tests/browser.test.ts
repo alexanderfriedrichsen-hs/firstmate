@@ -287,6 +287,37 @@ test(
         { name: "no-mistakes", path: "/fixture/no-mistakes/SKILL.md" },
       ]);
       await page.unroute("**/v1/commands");
+      const fourSkills = [1, 2, 3, 4].map((n) => ({
+        name: "selected-" + n,
+        path: "/fixture/selected-" + n,
+      }));
+      await page.evaluate(
+        ({ cid, fourSkills }) =>
+          localStorage.setItem("skills:" + cid, JSON.stringify(fourSkills)),
+        { cid, fourSkills },
+      );
+      await page.reload();
+      await slashComposer.fill("/no-mis");
+      await page
+        .getByRole("option")
+        .filter({ hasText: "/no-mistakes" })
+        .waitFor();
+      await slashComposer.press("Enter");
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "up to four skills" })
+        .waitFor();
+      assert.deepEqual(
+        await page.evaluate(
+          (cid) => JSON.parse(localStorage.getItem("skills:" + cid)!),
+          cid,
+        ),
+        fourSkills,
+      );
+      for (const skill of fourSkills)
+        await page
+          .getByRole("button", { name: "$" + skill.name + " ×", exact: true })
+          .click();
       await slashComposer.fill("/compact");
       await page
         .getByRole("option")

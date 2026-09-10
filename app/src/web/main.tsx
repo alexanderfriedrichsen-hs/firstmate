@@ -926,6 +926,8 @@ function Chat({
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashError, setSlashError] = useState("");
+  const [slashLoading, setSlashLoading] = useState(false);
+  const [slashSelectionError, setSlashSelectionError] = useState("");
   const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1];
   const slashOpen =
     slashQuery !== undefined && !slashDismissed && !outer.retiredAt;
@@ -933,6 +935,7 @@ function Chat({
     if (!slashOpen || outer.provider !== "codex") return;
     let live = true;
     setSlashError("");
+    setSlashLoading(true);
     void api("catalog?topic=skills&conversationId=" + outer.id)
       .then((result) => {
         if (live)
@@ -942,7 +945,8 @@ function Chat({
               .filter((skill: any) => skill.enabled),
           );
       })
-      .catch((e) => live && setSlashError(String(e)));
+      .catch((e) => live && setSlashError(String(e)))
+      .finally(() => live && setSlashLoading(false));
     return () => {
       live = false;
     };
@@ -978,10 +982,20 @@ function Chat({
   const chooseSlash = (item: any) => {
     if (!item) return;
     if (item.kind === "Skill") {
+      if (
+        skills.length >= 4 &&
+        !skills.some((skill) => skill.path === item.path)
+      ) {
+        setSlashSelectionError(
+          "You can attach up to four skills. Remove a selected skill before adding another.",
+        );
+        return;
+      }
+      setSlashSelectionError("");
       const next = [
         ...skills.filter((skill) => skill.path !== item.path),
         { name: item.name, path: item.path },
-      ].slice(-4);
+      ];
       setSkills(next);
       localStorage.setItem("skills:" + outer.id, JSON.stringify(next));
       const text = "Use $" + item.name + " to ";
@@ -1444,7 +1458,9 @@ function Chat({
         )}
         {slashOpen && (
           <div className="slash-menu">
-            <div className="help">Skills and app commands</div>
+            <div className="help">Skills and commands</div>
+            {slashLoading && <p role="status">Loading skills…</p>}
+            {slashSelectionError && <p role="alert">{slashSelectionError}</p>}
             {slashError && (
               <p role="status">Skills could not load: {slashError}</p>
             )}
@@ -1474,7 +1490,7 @@ function Chat({
                 </div>
               ))}
             </div>
-            {!slashItems.length && (
+            {!slashItems.length && !slashLoading && (
               <p role="status">No matching skills or commands</p>
             )}
           </div>
@@ -1564,8 +1580,12 @@ function Chat({
               key={skill.path}
               className="skill-chip"
               onClick={() => {
-                setSkills([]);
-                localStorage.removeItem("skills:" + c.id);
+                const next = skills.filter(
+                  (selected) => selected.path !== skill.path,
+                );
+                setSkills(next);
+                localStorage.setItem("skills:" + c.id, JSON.stringify(next));
+                setSlashSelectionError("");
               }}
               title="Remove selected skill"
             >
