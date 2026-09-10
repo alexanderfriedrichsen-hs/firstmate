@@ -115,6 +115,36 @@ export class Store {
         paused: true,
       });
   }
+  validateModelEffort(provider: string, model: string, effort?: string) {
+    if (
+      provider === "cursor" &&
+      (this.setting("policy")?.cursor?.mode !== "subscription_usage" ||
+        !this.setting("policy")?.cursor?.enabled)
+    )
+      throw new Conflict(
+        "Enable Cursor subscription usage reporting in provider settings first. The previous hard cap cannot be enforced by ACP.",
+      );
+    const catalog =
+      this.setting("providerModelCatalog." + provider) ??
+      (provider === "codex" ? this.setting("modelCatalog") : undefined) ??
+      [];
+    const entry = catalog.find((m: any) => m.model === model);
+    if (provider === "cursor" && !entry)
+      throw new Conflict(
+        "Refresh the Cursor model catalog and select an available model.",
+      );
+    if (provider !== "codex" && catalog.length && !entry)
+      throw new Conflict("Select a model from this provider catalog.");
+    if (!effort) return;
+    if (
+      !entry?.supportedReasoningEfforts?.some(
+        (e: any) => e.reasoningEffort === effort,
+      )
+    )
+      throw new Conflict(
+        "Unsupported thinking effort for this model. Refresh the provider model catalog.",
+      );
+  }
   requireCurrentRunner(c: Conversation, minimum = 2) {
     if (!c.runnerId) return;
     const file = path.join(
@@ -478,6 +508,18 @@ export class Store {
           );
       return { ticketId: id, ticket: t };
     }
+    if (c.type === "provider.cursor.subscription") {
+      user();
+      this.setting("policy", {
+        ...this.setting("policy"),
+        cursor: {
+          enabled: true,
+          mode: "subscription_usage",
+          hardCapEnforced: false,
+        },
+      });
+      return { policy: this.setting("policy") };
+    }
     if (c.type === "runtime.pause") {
       if (this.setting("shadowMode") && p.paused === false)
         throw new Conflict("Shadow mode cannot dispatch work");
@@ -500,17 +542,15 @@ export class Store {
         throw new Denied("Resource not found");
       const v = z
         .object({
-          provider: z.enum(["codex", "claude"]),
+          provider: z.enum(["codex", "claude", "cursor"]),
+          effort: z.string().max(40).optional(),
           model: z.string().min(1),
           role: z.enum(["supervisor", "worker"]),
           ticketId: z.string().uuid().optional(),
         })
         .strict()
         .parse(p);
-      if (v.role === "supervisor" && v.provider === "claude")
-        throw new Conflict(
-          "Claude supervisor requires verified native permission, interrupt, and resume controls",
-        );
+      this.validateModelEffort(v.provider, v.model, v.effort);
       if (v.role === "supervisor" && actor.kind !== "user")
         throw new Denied("Resource not found");
       if (v.role === "worker" && !v.ticketId)
@@ -568,6 +608,14 @@ export class Store {
     if (c.type.startsWith("conversation.") || c.type === "permission.reply") {
       const conv = this.conversation(c.targetId!, actor);
       this.assertLeaseActive(conv.id);
+      if (
+        [
+          "conversation.send",
+          "conversation.resume",
+          "conversation.steer",
+        ].includes(c.type)
+      )
+        this.validateModelEffort(conv.provider, conv.model, conv.effort);
       if (conv.ticketId) this.assertManaged(conv.ticketId);
       if (c.expectedVersion !== conv.version)
         throw new Conflict("Conversation changed; refresh before retrying");
@@ -593,20 +641,15 @@ export class Store {
         )
           throw new Conflict("Settle pending input before changing the chat.");
         if (c.type === "conversation.model") {
-          if (conv.provider !== "codex")
-            throw new Conflict("Model switching currently requires Codex.");
-          this.requireCurrentRunner(conv, p.effort ? 3 : 2);
-          if (p.effort) {
-            const model = (this.setting("modelCatalog") ?? []).find(
-              (m: any) => m.model === p.model,
-            );
-            if (
-              !model?.supportedReasoningEfforts.some(
-                (e: any) => e.reasoningEffort === p.effort,
-              )
-            )
-              throw new Conflict("Unsupported thinking effort for this model.");
-          }
+          this.requireCurrentRunner(
+            conv,
+            conv.provider === "codex" ? (p.effort ? 3 : 2) : 4,
+          );
+          this.validateModelEffort(
+            conv.provider,
+            z.string().parse(p.model),
+            p.effort ? z.string().parse(p.effort) : undefined,
+          );
           conv.effort = p.effort
             ? z.string().max(40).parse(p.effort)
             : undefined;
@@ -614,14 +657,28 @@ export class Store {
         } else {
           if (conv.role !== "supervisor")
             throw new Conflict("New chat is available for Firstmate only.");
+          const provider = z
+            .enum(["codex", "claude", "cursor"])
+            .parse(p.provider ?? conv.provider);
+          const model = z
+            .string()
+            .min(1)
+            .max(128)
+            .parse(p.model ?? (provider === conv.provider ? conv.model : ""));
+          const effort = p.effort
+            ? z.string().max(40).parse(p.effort)
+            : provider === conv.provider && p.model === undefined
+              ? conv.effort
+              : undefined;
+          this.validateModelEffort(provider, model, effort);
           conv.retiredAt = now();
           conv.inputOwner = actor.id;
           this.outbox(c, "conversation.park", conv.id, {});
           const next: Conversation = {
             id: randomUUID(),
-            provider: conv.provider,
-            model: conv.model,
-            effort: conv.effort,
+            provider,
+            model,
+            effort,
             role: "supervisor",
             cwd: conv.cwd,
             incarnation: 0,
@@ -645,7 +702,7 @@ export class Store {
             "image/webp",
           ])
           .parse(p.mediaType);
-        if (conv.provider === "claude" && media.startsWith("image/"))
+        if (conv.provider !== "codex" && media.startsWith("image/"))
           throw new Conflict("Claude image attachments are not yet verified");
         const content = Buffer.from(
           z.string().max(750000).parse(p.base64),

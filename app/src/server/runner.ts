@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { subscriptionEnv } from "./provider-auth.ts";
+import { CursorACP } from "./cursor-acp.ts";
 import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -16,11 +18,12 @@ let threadId = config.providerId;
 let turnId: string | undefined;
 let state = "starting";
 let claude: Query | undefined;
+let cursor: CursorACP | undefined;
 let claudeInterrupted = false;
 const commands = new Map<string, any>();
 const permissions = new Map<
   string,
-  { id: any; method: string; resolve?: (answer: any) => void }
+  { id: any; method: string; input?: any; resolve?: (answer: any) => void }
 >();
 const journal = fs.openSync(path.join(dir, "events.jsonl"), "a", 0o600);
 function emit(type: string, payload: any) {
@@ -40,10 +43,11 @@ function identity() {
     path.join(dir, "identity.json"),
     JSON.stringify({
       pid: process.pid,
-      providerPid: child?.pid,
-      providerStartIdentity: child?.pid
-        ? processIdentity(child.pid)
-        : undefined,
+      providerPid: child?.pid ?? cursor?.child.pid,
+      providerStartIdentity:
+        (child?.pid ?? cursor?.child.pid)
+          ? processIdentity((child?.pid ?? cursor?.child.pid)!)
+          : undefined,
       startIdentity: processIdentity(),
       providerId: threadId,
       turnId,
@@ -66,9 +70,7 @@ const child =
         cwd: config.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: {
-          ...process.env,
-          OPENAI_API_KEY: undefined,
-          ANTHROPIC_API_KEY: undefined,
+          ...subscriptionEnv(),
         },
       })
     : undefined;
@@ -154,6 +156,24 @@ if (child) {
   });
 }
 async function init() {
+  if (config.provider === "cursor") {
+    cursor = new CursorACP(config.executable, config.cwd, (type, payload) => {
+      if (type === "permission.request") {
+        permissions.set(payload.id, { id: payload.id, method: "cursor/tool" });
+        state = "waiting_permission";
+      }
+      if (type === "provider.exit") state = "lost";
+      emit(
+        type,
+        type === "permission.request"
+          ? { ...payload, incarnation: config.incarnation }
+          : payload,
+      );
+      identity();
+    });
+    threadId = await cursor.initialize(config.cwd, threadId);
+    emit("conversation.bound", { providerId: threadId, model: config.model });
+  }
   if (child) {
     await rpc("initialize", {
       clientInfo: { name: "firstmate_local", version: "0.1.0" },
@@ -182,48 +202,66 @@ async function init() {
   identity();
   emit("runner.ready", { providerId: threadId });
 }
-async function claudeTurn(text: string, model = config.model) {
+async function claudeTurn(
+  text: string,
+  model = config.model,
+  effort = config.effort,
+) {
   claudeInterrupted = false;
   state = "running";
   identity();
-  claude = query({
-    prompt: text,
-    options: {
-      cwd: config.cwd,
-      model,
-      resume: threadId,
-      pathToClaudeCodeExecutable: config.executable,
-      settingSources: ["user", "project", "local"],
-      permissionMode: "default",
-      includePartialMessages: true,
-      maxTurns: config.maxTurns ?? 8,
-      systemPrompt: {
-        type: "preset",
-        preset: "claude_code",
-        append: config.instructions,
-      },
-      env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: undefined,
-        OPENAI_API_KEY: undefined,
-      },
-      canUseTool: async (tool, input, options) => {
-        const id = randomUUID();
-        emit("permission.request", {
-          id,
-          method: "claude/tool",
-          params: { tool, input, toolUseID: options.toolUseID },
-          incarnation: config.incarnation,
-        });
-        state = "waiting_permission";
-        identity();
-        return await new Promise((resolve) => {
-          permissions.set(id, { id, method: "claude/tool", resolve });
-        });
-      },
-    },
-  });
   try {
+    claude = query({
+      prompt: text,
+      options: {
+        cwd: config.cwd,
+        model,
+        effort,
+        resume: threadId,
+        pathToClaudeCodeExecutable: config.executable,
+        settingSources: ["user", "project", "local"],
+        permissionMode: "default",
+        includePartialMessages: true,
+        maxTurns: config.maxTurns ?? 8,
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: config.instructions,
+        },
+        env: {
+          ...subscriptionEnv(),
+        },
+        canUseTool: async (tool, input, options) => {
+          const id = randomUUID();
+          emit("permission.request", {
+            id,
+            method: "claude/tool",
+            params: { tool, input, toolUseID: options.toolUseID },
+            incarnation: config.incarnation,
+          });
+          state = "waiting_permission";
+          identity();
+          return await new Promise((resolve) => {
+            const abort = () => {
+              permissions.delete(id);
+              resolve({ behavior: "deny", message: "Request interrupted" });
+              emit("permission.answered", { id, decision: "cancel" });
+            };
+            if (options.signal.aborted) return abort();
+            options.signal.addEventListener("abort", abort, { once: true });
+            permissions.set(id, {
+              id,
+              method: "claude/tool",
+              input,
+              resolve: (answer) => {
+                options.signal.removeEventListener("abort", abort);
+                resolve(answer);
+              },
+            });
+          });
+        },
+      },
+    });
     for await (const msg of claude) {
       if (msg.type === "system" && "session_id" in msg) {
         threadId = msg.session_id;
@@ -315,6 +353,47 @@ async function handle(req: any) {
       turnId = result.turn?.id ?? turnId;
       state = "running";
       identity();
+    } else if (cursor) {
+      state = "running";
+      identity();
+      const model = req.model ?? config.model;
+      const prompt =
+        config.instructions +
+        "\n\nUser request:\n" +
+        req.text +
+        (req.attachments ?? [])
+          .map(
+            (a: any) =>
+              "\nAttached file " +
+              a.name +
+              ":\n" +
+              Buffer.from(a.base64, "base64").toString("utf8"),
+          )
+          .join("");
+      void cursor
+        .prompt(prompt, model)
+        .then((result) => {
+          state = "idle";
+          emit("cursor.result", { ...result, model, turn: req.id });
+          emit("runner.settled", {
+            outcome:
+              result.stopReason === "cancelled"
+                ? "interrupted"
+                : result.stopReason === "end_turn"
+                  ? "succeeded"
+                  : "failed",
+          });
+        })
+        .catch((error) => {
+          state = "failed";
+          emit("runner.failed", { message: String(error) });
+        })
+        .finally(() => {
+          permissions.clear();
+          emit("permission.expired", {});
+          identity();
+        });
+      result = { accepted: true };
     } else {
       void claudeTurn(
         req.text +
@@ -328,14 +407,25 @@ async function handle(req: any) {
             )
             .join(""),
         req.model ?? config.model,
+        req.effort ?? config.effort,
       );
       result = { accepted: true };
     }
   } else if (req.type === "interrupt") {
     if (child && turnId)
       result = await rpc("turn/interrupt", { threadId, turnId });
-    else if (claude) {
+    else if (cursor) {
+      cursor.cancel();
+      result = { requested: true };
+    } else if (claude) {
       claudeInterrupted = true;
+      for (const [id, permission] of permissions) {
+        permission.resolve?.({
+          behavior: "deny",
+          message: "Request interrupted",
+        });
+        permissions.delete(id);
+      }
       await claude.interrupt();
       result = { requested: true };
     } else result = { idle: true };
@@ -347,10 +437,12 @@ async function handle(req: any) {
   } else if (req.type === "permission") {
     const perm = permissions.get(req.requestId);
     if (!perm) throw new Error("Permission is no longer pending");
-    if (perm.resolve) {
+    if (perm.method === "cursor/tool") {
+      cursor!.permission(req.requestId, req.decision);
+    } else if (perm.resolve) {
       perm.resolve(
         req.decision === "accept"
-          ? { behavior: "allow", updatedInput: req.provenance.params.input }
+          ? { behavior: "allow", updatedInput: perm.input }
           : { behavior: "deny", message: "User denied this request" },
       );
     } else {
@@ -413,12 +505,13 @@ server.listen(config.socket, () => {
     identity();
   });
 });
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   if (state === "running" || state === "waiting_permission") {
     emit("runner.stopRefused", { reason: "Active provider work" });
     return;
   }
   child?.kill("SIGTERM");
+  await cursor?.close();
   server.close();
   fs.closeSync(journal);
   process.exit(0);

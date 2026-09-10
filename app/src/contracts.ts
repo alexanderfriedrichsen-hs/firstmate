@@ -38,7 +38,7 @@ export type Ticket = {
 export type Conversation = {
   id: string;
   ticketId?: string;
-  provider: "codex" | "claude";
+  provider: "codex" | "claude" | "cursor";
   providerId?: string;
   model: string;
   effort?: string;

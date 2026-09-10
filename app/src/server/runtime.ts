@@ -154,6 +154,16 @@ export class Runtime {
           .run(this.store.generation, job.id);
         try {
           if (
+            c &&
+            [
+              "conversation.launch",
+              "conversation.resume",
+              "conversation.send",
+              "conversation.steer",
+            ].includes(job.kind)
+          )
+            this.store.validateModelEffort(c.provider, c.model, c.effort);
+          if (
             job.kind === "conversation.launch" ||
             job.kind === "conversation.resume"
           )
@@ -505,6 +515,7 @@ export class Runtime {
   }
   async launch(c: Conversation) {
     this.store.assertLeaseActive(c.id);
+    this.store.validateModelEffort(c.provider, c.model, c.effort);
     if (c.runnerId) {
       const old = this.identity(c);
       if (old && alive(old.pid, old.startIdentity))
@@ -576,7 +587,15 @@ export class Runtime {
     const socket = path.join(socketDir, c.runnerId.slice(0, 16) + ".sock");
     const executable = execFileSync(
       "/bin/zsh",
-      ["-lc", "command -v " + (c.provider === "codex" ? "codex" : "claude")],
+      [
+        "-lc",
+        "command -v " +
+          (c.provider === "codex"
+            ? "codex"
+            : c.provider === "claude"
+              ? "claude"
+              : "agent"),
+      ],
       { encoding: "utf8" },
     ).trim();
     const token = randomBytes(32).toString("hex");
@@ -620,7 +639,7 @@ export class Runtime {
     atomic(
       path.join(dir, "config.json"),
       JSON.stringify({
-        runnerProtocol: 3,
+        runnerProtocol: 4,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
@@ -907,6 +926,64 @@ export class Runtime {
           );
         this.store.setting(key, total);
       }
+    }
+    if (
+      e.type === "cursor.update" &&
+      p.sessionUpdate === "agent_message_chunk" &&
+      p.content?.type === "text"
+    ) {
+      const key = "cursor-message:" + c.id;
+      const mid =
+        this.store.setting(key) ?? c.id + ":" + e.runnerId + ":" + e.sequence;
+      this.store.setting(key, mid);
+      const old = this.store.db
+        .prepare("SELECT content FROM messages WHERE id=?")
+        .get(mid) as any;
+      this.store.message(
+        c.id,
+        mid,
+        "assistant",
+        (old?.content ?? "") + p.content.text,
+        "message",
+        mid,
+      );
+    }
+    if (e.type === "cursor.result") {
+      c.state = "idle";
+      this.settle(
+        c,
+        p.stopReason === "cancelled"
+          ? "interrupted"
+          : p.stopReason === "end_turn"
+            ? "succeeded"
+            : "failed",
+      );
+      this.store.setting("cursor-message:" + c.id, null);
+      const input = Number.isFinite(p.usage?.inputTokens)
+        ? p.usage.inputTokens
+        : null;
+      const output = Number.isFinite(p.usage?.outputTokens)
+        ? p.usage.outputTokens
+        : null;
+      this.store.db
+        .prepare("INSERT OR IGNORE INTO usage VALUES(?,?,?,?,?,?,?)")
+        .run(
+          c.id + ":" + p.turn,
+          c.id,
+          p.model ?? c.model,
+          input,
+          output,
+          JSON.stringify({
+            provider: "cursor",
+            role: c.role,
+            coverage:
+              input === null || output === null ? "unavailable" : "measured",
+            raw: p.usage,
+            ticketId: c.ticketId,
+            hardCapEnforced: false,
+          }),
+          e.at,
+        );
     }
     if (e.type === "claude.event") {
       if (p.type === "stream_event") {
