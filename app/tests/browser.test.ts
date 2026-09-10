@@ -13,7 +13,7 @@ import type { Conversation } from "../src/contracts.ts";
 
 test(
   "browser preserves reading position, searches old history, and saves panel width",
-  { timeout: 45000 },
+  { timeout: 60000 },
   async () => {
     const chrome =
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -981,7 +981,32 @@ test(
         .getByRole("region", { name: "Heartbeat status" })
         .getByText("Paused", { exact: true })
         .waitFor();
+      const freshTick = new Date(Date.now() + 45000).toISOString();
+      store.setting("heartbeat", {
+        ...store.setting("heartbeat"),
+        lastTickAt: freshTick,
+      });
+      const heartbeatPoll = page.waitForResponse((response) =>
+        response.url().endsWith("/v1/heartbeat"),
+      );
       await page.clock.fastForward(75000);
+      await heartbeatPoll;
+      await page
+        .getByRole("region", { name: "Heartbeat status" })
+        .getByText("Paused", { exact: true })
+        .waitFor();
+      assert.equal(
+        await page
+          .getByRole("button", {
+            name: "Heartbeat needs attention",
+            exact: true,
+          })
+          .count(),
+        0,
+        "Fresh heartbeat poll prevents false stale status without snapshot events",
+      );
+      await page.route("**/v1/heartbeat", (route) => route.abort("failed"));
+      await page.clock.fastForward(45000);
       await page
         .getByRole("region", { name: "Heartbeat status" })
         .getByText("Heartbeat overdue", { exact: true })

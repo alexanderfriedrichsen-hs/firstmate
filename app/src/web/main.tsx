@@ -73,6 +73,32 @@ function App() {
   const contextWidth = usePanelWidth("context", 338, 280, 600);
   const [snapshot, setSnapshot] = useState<any>();
   const heartbeatHealth = useHeartbeatHealth(snapshot?.heartbeat);
+  useEffect(() => {
+    if (!snapshot) return;
+    let active = true;
+    let pending = false;
+    const timer = setInterval(() => {
+      if (pending) return;
+      pending = true;
+      void api("heartbeat", { signal: AbortSignal.timeout(10000) })
+        .then((heartbeat) => {
+          if (active)
+            setSnapshot((current: any) =>
+              current ? { ...current, heartbeat } : current,
+            );
+        })
+        .catch(() => {
+          /* Keep the last server timestamp so missing heartbeats become stale. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    }, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [!!snapshot]);
   const [view, setView] = useState(
     location.hash.startsWith("#message/") ||
       location.hash.startsWith("#ticket/")
@@ -367,7 +393,8 @@ function App() {
         </div>
         <footer>
           {snapshot.heartbeat &&
-            ["attention", "stale"].includes(heartbeatHealth ?? "") && (
+            (["attention", "stale"].includes(heartbeatHealth ?? "") ||
+              snapshot.heartbeat.issues?.length > 0) && (
               <button
                 onClick={() => navigate("dashboards")}
                 className="heartbeat-attention"
