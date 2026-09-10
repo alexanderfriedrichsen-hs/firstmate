@@ -411,7 +411,32 @@ export class Runtime {
     c.version++;
     this.store.putConversation(c);
   }
+  reconcileExpiredReplies(c: Conversation) {
+    for (const row of this.store.db
+      .prepare(
+        "SELECT o.id,o.payload,p.data FROM outbox o JOIN permissions p ON p.id=json_extract(o.payload,'$.requestId') AND p.conversation_id=o.target_id WHERE o.target_id=? AND o.kind='permission.reply' AND o.state IN ('pending','uncertain') AND p.state='expired'",
+      )
+      .all(c.id) as any[]) {
+      if (JSON.parse(row.data).incarnation !== c.incarnation) continue;
+      this.store.db
+        .prepare(
+          "UPDATE outbox SET state='cancelled' WHERE id=? AND state IN ('pending','uncertain')",
+        )
+        .run(row.id);
+      this.store.event(
+        "permission.replyExpired",
+        c.id,
+        {
+          jobId: row.id,
+          reason:
+            "Request expired; delivery was not retried. Prior delivery remains unconfirmed.",
+        },
+        c.ticketId,
+      );
+    }
+  }
   reconcile(c: Conversation) {
+    this.reconcileExpiredReplies(c);
     if (!c.runnerId || c.state === "planned") return;
     const identity = this.identity(c);
     if (
@@ -648,7 +673,7 @@ export class Runtime {
     atomic(
       path.join(dir, "config.json"),
       JSON.stringify({
-        runnerProtocol: 5,
+        runnerProtocol: 6,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
@@ -840,6 +865,7 @@ export class Runtime {
           "UPDATE permissions SET state='expired' WHERE conversation_id=? AND state IN ('pending','answering')",
         )
         .run(c.id);
+    if (e.type === "permission.expired") this.reconcileExpiredReplies(c);
     if (e.type === "permission.resolved") {
       this.store.db
         .prepare(

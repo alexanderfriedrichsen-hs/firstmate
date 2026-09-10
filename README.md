@@ -195,6 +195,10 @@ The app does not enforce an account-wide token cap or change subscription billin
 As configured for this app, Codex, Claude, and Cursor run with full tool access, including review conversations.
 The app uses native full-access settings and automatically grants supported tool permission requests; provider and operating system limits still apply.
 Actual questions and plan decisions appear in the conversation and wait for your answer.
+Recognized empty-form Codex app tool authorization requests are accepted automatically with the native response format.
+MCP forms that require supported scalar values remain questions; sign-in links require you to complete authentication before continuing.
+Unsupported forms or provider requests show a stop-and-resume notice instead of an approval button. Optional fields and complex form schemas are not yet supported.
+Expired request replies are never retried; reconciliation records uncertain prior delivery without claiming that it succeeded or never happened.
 To apply this policy to a retained runner from an older release, interrupt and park it, then resume the same chat.
 Protocol fixtures cover permissions and session transport; they do not establish full native provider verification.
 

@@ -1,3 +1,4 @@
+import { mcpAnswer } from "./elicitation.ts";
 import {
   configureHeartbeat,
   acknowledgeHeartbeat,
@@ -742,7 +743,7 @@ export class Store {
         c.type === "conversation.send" ||
         c.type === "conversation.steer"
       ) {
-        this.requireCurrentRunner(conv, 5);
+        this.requireCurrentRunner(conv, 6);
         if (
           conv.ticketId &&
           conv.stage !== "review" &&
@@ -837,14 +838,16 @@ export class Store {
         if (data.incarnation !== conv.incarnation)
           throw new Conflict("Permission incarnation changed");
         let response: any;
+        if (data.kind === "question" && data.elicitation)
+          mcpAnswer(data.elicitation, data.questions, p.answers);
         if (data.kind === "question") {
           response = {
             answers: validateQuestionAnswers(data.questions, p.answers),
           };
         } else
-          response = {
-            decision: z.enum(["accept", "decline"]).parse(p.decision),
-          };
+          throw new Conflict(
+            "This provider request cannot be answered here. Stop the turn and resume with the updated integration.",
+          );
         this.outbox(c, c.type, conv.id, {
           requestId: req.id,
           ...response,

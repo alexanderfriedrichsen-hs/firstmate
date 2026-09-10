@@ -22,7 +22,12 @@ test(
   "Codex runner starts and resumes full access while questions await typed answers and expire",
   { timeout: 20000 },
   async () => {
-    for (const resume of [undefined, "native-session"]) {
+    for (const [resume, form] of [
+      [undefined, false],
+      ["native-session", false],
+      [undefined, true],
+      ["native-session", true],
+    ] as const) {
       const dir = fs.mkdtempSync(
         path.join(os.tmpdir(), "fm-runner-questions-"),
       );
@@ -41,7 +46,43 @@ if(m.method==="turn/start"){
 write({id:m.id,result:{turn:{id:"turn"}}});
 write({method:"turn/started",params:{turn:{id:"turn"}}});
 write({id:"tool-approval",method:"item/commandExecution/requestApproval",params:{}});
-write({id:"question",method:"item/tool/requestUserInput",params:{questions:[{id:"choice",header:"Choose",question:"Which?",options:[{label:"A",description:"First"},{label:"B",description:"Second"}],isOther:true}]}});
+write({id:"mcp-approval",method:"mcpServer/elicitation/request",params:{mode:"form",serverName:"codex_apps",_meta:{codex_approval_kind:"tool_suggestion",tool_type:"plugin",suggest_type:"install",tool_id:"linear@openai-curated-remote"},requestedSchema:{type:"object",properties:{}}}});
+write(${JSON.stringify(
+          form
+            ? {
+                id: "question",
+                method: "mcpServer/elicitation/request",
+                params: {
+                  mode: "form",
+                  message: "Which?",
+                  requestedSchema: {
+                    type: "object",
+                    properties: {
+                      choice: { type: "string", enum: ["A", "B"] },
+                    },
+                    required: ["choice"],
+                  },
+                },
+              }
+            : {
+                id: "question",
+                method: "item/tool/requestUserInput",
+                params: {
+                  questions: [
+                    {
+                      id: "choice",
+                      header: "Choose",
+                      question: "Which?",
+                      options: [
+                        { label: "A", description: "First" },
+                        { label: "B", description: "Second" },
+                      ],
+                      isOther: true,
+                    },
+                  ],
+                },
+              },
+        )});
 }
 if(m.method==="turn/interrupt"){
 write({id:m.id,result:{}});
@@ -55,7 +96,7 @@ write({method:"serverRequest/resolved",params:{threadId:"native-session",request
       fs.writeFileSync(
         path.join(dir, "config.json"),
         JSON.stringify({
-          runnerProtocol: 5,
+          runnerProtocol: 6,
           runnerId: "fixture",
           incarnation: 1,
           provider: "codex",
@@ -142,6 +183,16 @@ write({method:"serverRequest/resolved",params:{threadId:"native-session",request
           (e) => e.type === "permission.request",
         ).payload;
         assert.equal(pending.kind, "question");
+        assert.deepEqual(
+          read(wire).find((m) => m.id === "mcp-approval" && m.result).result,
+          { action: "accept", content: {}, _meta: null },
+        );
+        assert.equal(
+          read(path.join(dir, "events.jsonl")).filter(
+            (e) => e.type === "permission.request",
+          ).length,
+          1,
+        );
         assert.equal(
           read(wire).some((m) => m.id === "question" && m.result),
           false,
@@ -182,7 +233,9 @@ write({method:"serverRequest/resolved",params:{threadId:"native-session",request
           );
           assert.deepEqual(
             read(wire).find((m) => m.id === "question" && m.result).result,
-            { answers: { choice: { answers: ["B"] } } },
+            form
+              ? { action: "accept", content: { choice: "B" }, _meta: null }
+              : { answers: { choice: { answers: ["B"] } } },
           );
         }
         await request({ type: "interrupt" });

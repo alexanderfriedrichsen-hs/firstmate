@@ -1,3 +1,4 @@
+import { mcpApproval, mcpQuestions, mcpAnswer } from "./elicitation.ts";
 import {
   normalizeQuestions,
   claudeToolHandler,
@@ -130,7 +131,11 @@ if (child) {
       return;
     }
     if (msg.id !== undefined) {
-      const approval = codexApproval(msg.method, msg.params);
+      const approval =
+        codexApproval(msg.method, msg.params) ??
+        (msg.method === "mcpServer/elicitation/request"
+          ? mcpApproval(msg.params)
+          : undefined);
       if (approval !== undefined) {
         child!.stdin.write(
           JSON.stringify({ id: msg.id, result: approval }) + "\n",
@@ -162,14 +167,43 @@ if (child) {
         }
         return;
       }
+      if (msg.method === "mcpServer/elicitation/request") {
+        try {
+          const id = randomUUID();
+          const form = mcpQuestions(msg.params);
+          permissions.set(id, {
+            id: msg.id,
+            method: msg.method,
+            questions: form.questions,
+            input: msg.params,
+          });
+          emit("permission.request", {
+            id,
+            kind: "question",
+            method: msg.method,
+            ...form,
+            elicitation: {
+              mode: msg.params.mode,
+              requestedSchema: msg.params.requestedSchema,
+            },
+            incarnation: config.incarnation,
+          });
+          state = "waiting_permission";
+          identity();
+          return;
+        } catch {
+          /* Unsupported schemas remain visible without a fake approval action. */
+        }
+      }
       const id = randomUUID();
       permissions.set(id, { id: msg.id, method: msg.method });
       emit("permission.request", {
         id,
+        kind: "unsupported",
         requestId: msg.id,
         method: msg.method,
-        params: msg.params,
-        item: activeItems.get(msg.params?.itemId),
+        message:
+          "This provider request is not supported. Stop this turn and resume after updating the integration.",
         incarnation: config.incarnation,
       });
       state = "waiting_permission";
@@ -502,7 +536,14 @@ async function handle(req: any) {
     if (!perm) throw new Error("Permission is no longer pending");
     if (perm.questions) {
       const answers = validateQuestionAnswers(perm.questions, req.answers);
-      if (perm.method === "cursor/question")
+      if (perm.method === "mcpServer/elicitation/request")
+        child!.stdin.write(
+          JSON.stringify({
+            id: perm.id,
+            result: mcpAnswer(perm.input, perm.questions, answers),
+          }) + "\n",
+        );
+      else if (perm.method === "cursor/question")
         cursor!.answer(req.requestId, answers);
       else if (perm.method === "claude/question")
         perm.resolve!({
