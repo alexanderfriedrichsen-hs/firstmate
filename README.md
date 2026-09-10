@@ -184,6 +184,8 @@ Selecting a Codex skill attaches it to your next message; selecting a provider c
 Claude and Cursor commands appear only after the provider advertises them for that conversation, so the list can be empty before the first turn.
 The app commands `/skills`, `/artifacts`, and `/context` open the corresponding browser tabs.
 Outside the picker, Enter sends your message and Shift+Enter adds a line.
+You can attach up to four skills to a message; selecting a fifth shows an error instead of dropping an existing choice.
+Remove a single attached skill with its chip's close control, which leaves the others in place.
 
 Cursor uses its native Agent Client Protocol (ACP) connection and your signed-in subscription.
 Reported session usage appears in the app when the provider supplies it; missing usage is not treated as zero.
