@@ -143,11 +143,15 @@ export class ProviderAuth {
       message:
         login.state === "pending"
           ? "Complete sign-in in your browser. Credentials stay with the provider CLI."
-          : authenticated === true
-            ? "Signed in through the provider CLI."
-            : authenticated === false
-              ? "Sign in with your provider account."
-              : "Could not verify sign-in. Retry the status check.",
+          : login.state === "failed"
+            ? "Sign-in did not complete. Try again; your existing provider credentials remain unchanged."
+            : login.state === "cancelled"
+              ? "Sign-in cancelled. Your existing provider credentials remain unchanged."
+              : authenticated === true
+                ? "Signed in through the provider CLI."
+                : authenticated === false
+                  ? "Sign in with your provider account."
+                  : "Could not verify sign-in. Retry the status check.",
     };
   }
   async list() {
