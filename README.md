@@ -178,6 +178,13 @@ To switch Firstmate providers, select **New chat**, choose a provider, model, an
 Your previous conversation remains available, and the new chat starts with automatic work paused.
 Use **Model** to change the model and supported effort for the next turn with the current provider.
 
+Type `/` at the start of the composer to browse skills and commands, then type to filter the list.
+Use the arrow keys to choose an item, Enter or Tab to select it, and Escape to close the list.
+Selecting a Codex skill attaches it to your next message; selecting a provider command inserts its text for you to send.
+Claude and Cursor commands appear only after the provider advertises them for that conversation, so the list can be empty before the first turn.
+The app commands `/skills`, `/artifacts`, and `/context` open the corresponding browser tabs.
+Outside the picker, Enter sends your message and Shift+Enter adds a line.
+
 Cursor uses its native Agent Client Protocol (ACP) connection and your signed-in subscription.
 Reported session usage appears in the app when the provider supplies it; missing usage is not treated as zero.
 The app does not enforce an account-wide token cap or change subscription billing settings.
