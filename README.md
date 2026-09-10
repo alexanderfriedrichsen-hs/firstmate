@@ -208,6 +208,7 @@ Active managed work receives a concise Firstmate status review; unchanged idle f
 Automatic delivery waits while dispatch is paused, Firstmate is busy, a question needs your answer, or you have taken over.
 Retained external workers remain observation-only. A quiet running session is a reason to check progress, not proof that it has stalled.
 The dashboard shows the last completed runtime loop, the last and next fleet checks, and health concerns. A loop older than one minute is stale.
+A **Heartbeat needs attention** button appears in the footer when a loop goes stale or a check reports issues, and jumps to the dashboard.
 A heartbeat retries at most three presentations, ten minutes apart, until Firstmate acknowledges it with `wake.ack`.
 If retries are exhausted, inspect the conversation, then disable and re-enable heartbeat to retry. Disabling cancels pending heartbeat dispatch, without interrupting an active turn.
 
