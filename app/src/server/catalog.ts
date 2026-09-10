@@ -1,4 +1,5 @@
-import { execFile, spawn } from "node:child_process";
+import { CursorACP } from "./cursor-acp.ts";
+import { spawn } from "node:child_process";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { providerExecutable, subscriptionEnv } from "./provider-auth.ts";
 import { createInterface } from "node:readline";
@@ -167,47 +168,42 @@ async function claudeModels(cwd: string) {
   }
 }
 
-export function parseCursorModels(output: string) {
-  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
-  if (!clean.includes("Available models"))
-    throw Error("Sign in to Cursor to load available models.");
-  return clean.split("\n").flatMap((line) => {
-    const match = line.match(/^([a-zA-Z0-9][a-zA-Z0-9_.:/\[\],=+-]*) - (.+)$/);
-    if (!match) return [];
-    return [
-      {
-        model: match[1],
-        displayName: match[2].replace(
-          / \((?:current|default)(?:, (?:current|default))*\)$/,
-          "",
-        ),
-        defaultReasoningEffort: "",
-        supportedReasoningEfforts: [],
-      },
-    ];
-  });
+export function normalizeCursorModels(models: any[]) {
+  return models
+    .filter(
+      (m) =>
+        typeof m.modelId === "string" &&
+        m.modelId.length &&
+        typeof m.name === "string",
+    )
+    .map((m) => ({
+      model: m.modelId,
+      displayName: m.name,
+      description: m.description,
+      defaultReasoningEffort: "",
+      supportedReasoningEfforts: [],
+    }));
 }
 async function cursorModels(cwd: string) {
   const executable = providerExecutable("cursor");
   if (!executable) throw Error("Install Cursor CLI to load models.");
-  const output = await new Promise<string>((resolve, reject) =>
-    execFile(
-      executable,
-      ["models"],
-      { cwd, env: subscriptionEnv(), timeout: 15000, maxBuffer: 1024 * 1024 },
-      (error, stdout) =>
-        error
-          ? reject(Error("Sign in to Cursor to load available models."))
-          : resolve(stdout),
-    ),
-  );
-  const data = parseCursorModels(output);
-  if (!data.length)
-    throw Error("Cursor did not return a supported model catalog.");
-  return {
-    data,
-    observedAt: new Date().toISOString(),
-    effortReason:
-      "Cursor does not publish supported effort levels in its model catalog.",
-  };
+  const client = new CursorACP(executable, cwd, () => {});
+  const timer = setTimeout(() => client.close(), 15000);
+  try {
+    await client.initialize(cwd);
+    const data = normalizeCursorModels(
+      client.sessionMetadata?.models?.availableModels ?? [],
+    );
+    if (!data.length)
+      throw Error("Cursor did not return a supported model catalog.");
+    return {
+      data,
+      observedAt: new Date().toISOString(),
+      effortReason:
+        "Choose a model variant with the thinking effort you want. Cursor includes effort in each native model ID.",
+    };
+  } finally {
+    clearTimeout(timer);
+    client.close();
+  }
 }

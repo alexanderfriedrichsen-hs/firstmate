@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { ProviderAuth } from "../src/server/provider-auth.ts";
-import { parseCursorModels } from "../src/server/catalog.ts";
+import { normalizeCursorModels } from "../src/server/catalog.ts";
 function fakeLaunch(outputs: string[], calls: any[]) {
   return ((file: string, args: string[], options: any) => {
     const child: any = new EventEmitter();
@@ -70,19 +70,20 @@ test("missing providers and unknown status are explicit", async () => {
   );
   assert.equal((await unknown.status("cursor")).authenticated, null);
 });
-test("Cursor model parser accepts observed CLI format without inventing effort", () => {
+test("Cursor catalog preserves canonical ACP IDs without CLI aliases", () => {
   assert.deepEqual(
-    parseCursorModels(
-      "Available models\n\nsonnet - Claude Sonnet (current, default)\nTip: use --model",
-    ),
+    normalizeCursorModels([
+      { modelId: "gpt-5.6[effort=low]", name: "GPT Low" },
+      { modelId: null },
+    ]),
     [
       {
-        model: "sonnet",
-        displayName: "Claude Sonnet",
+        model: "gpt-5.6[effort=low]",
+        displayName: "GPT Low",
+        description: undefined,
         defaultReasoningEffort: "",
         supportedReasoningEfforts: [],
       },
     ],
   );
-  assert.throws(() => parseCursorModels("Error: Authentication required"));
 });
