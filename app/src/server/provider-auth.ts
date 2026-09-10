@@ -144,9 +144,9 @@ export class ProviderAuth {
         login.state === "pending"
           ? "Complete sign-in in your browser. Credentials stay with the provider CLI."
           : login.state === "failed"
-            ? "Sign-in did not complete. Try again; your existing provider credentials remain unchanged."
+            ? "Sign-in did not complete. Try again or check your provider connection."
             : login.state === "cancelled"
-              ? "Sign-in cancelled. Your existing provider credentials remain unchanged."
+              ? "Sign-in cancelled. Check your provider connection before continuing."
               : authenticated === true
                 ? "Signed in through the provider CLI."
                 : authenticated === false
