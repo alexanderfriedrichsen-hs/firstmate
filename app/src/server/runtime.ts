@@ -1,3 +1,4 @@
+import { checkHeartbeat, heartbeatCompleted } from "./heartbeat.ts";
 import { nativeCommands } from "./native-commands.ts";
 import fs from "node:fs";
 import path from "node:path";
@@ -97,6 +98,7 @@ export class Runtime {
           });
         }
       }
+      checkHeartbeat(this.store);
       this.scheduleRetries();
       this.scheduleWakes();
       this.schedulePrPolls();
@@ -253,6 +255,7 @@ export class Runtime {
           );
         }
       }
+      heartbeatCompleted(this.store);
     } catch (e) {
       if (this.owns()) this.store.setting("runtimeError", String(e));
     } finally {
@@ -494,16 +497,23 @@ export class Runtime {
       }
     }
     const data = JSON.parse(wake.data);
+    if (data.kind === "heartbeat" && !this.store.setting("heartbeat")?.enabled)
+      return;
+    const commandId = randomUUID();
     this.store.db.transaction(() => {
       this.store.command(
         { kind: "collector", id: "scheduler" },
         {
-          commandId: randomUUID(),
+          commandId,
           type: "conversation.send",
           targetId: supervisor.id,
           expectedVersion: supervisor.version,
           payload: {
-            text: `Actionable managed-work wake ${wake.id}: ${JSON.stringify(data)}. Inspect the current ticket, handle authorized follow-up, then commit wake.ack with this id. Ending your turn alone does not acknowledge it.`,
+            text:
+              (data.kind === "heartbeat"
+                ? "Scheduled fleet heartbeat. Review agent-managed tickets and verified runner/lease/dispatch health. Give a concise status update for active work, handle only authorized follow-ups, and acknowledge this wake after reviewing. Retained external workers are observation-only: do not adopt or control them. A quiet long-running tool is not proof of a stall. Do not interrupt busy workers or answer human questions. "
+                : "") +
+              `Actionable managed-work wake ${wake.id}: ${JSON.stringify(data)}. Inspect the current ticket, handle authorized follow-up, then commit wake.ack with this id. Ending your turn alone does not acknowledge it.`,
           },
         },
       );
@@ -512,6 +522,7 @@ export class Runtime {
         .run(
           JSON.stringify({
             ...data,
+            commandId,
             presentations: (data.presentations ?? 0) + 1,
             nextAt: new Date(Date.now() + 600000).toISOString(),
           }),

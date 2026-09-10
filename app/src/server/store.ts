@@ -1,3 +1,8 @@
+import {
+  configureHeartbeat,
+  acknowledgeHeartbeat,
+  heartbeatStatus,
+} from "./heartbeat.ts";
 import { validateQuestionAnswers } from "./questions.ts";
 import Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
@@ -521,6 +526,17 @@ export class Store {
       });
       return { policy: this.setting("policy") };
     }
+    if (c.type === "heartbeat.configure") {
+      user();
+      const value = z
+        .object({
+          enabled: z.boolean(),
+          intervalMinutes: z.number().int().min(1).max(120),
+        })
+        .parse(p);
+      configureHeartbeat(this, value.enabled, value.intervalMinutes);
+      return { heartbeat: heartbeatStatus(this) };
+    }
     if (c.type === "runtime.pause") {
       if (this.setting("shadowMode") && p.paused === false)
         throw new Conflict("Shadow mode cannot dispatch work");
@@ -847,10 +863,18 @@ export class Store {
       if (actor.kind !== "supervisor") throw new Denied("Resource not found");
       const wid = z.string().parse(p.id);
       const wake = this.db
-        .prepare("SELECT ticket_id FROM wakes WHERE id=?")
+        .prepare("SELECT ticket_id,state,data FROM wakes WHERE id=?")
         .get(wid) as any;
       if (!wake) throw new Denied("Resource not found");
       if (wake.ticket_id) this.ticket(wake.ticket_id, actor);
+      if (JSON.parse(wake.data).kind === "heartbeat") {
+        if (
+          wake.state !== "presented" ||
+          this.setting("heartbeat")?.pendingWakeId !== wid
+        )
+          throw new Conflict("Heartbeat is no longer pending");
+        acknowledgeHeartbeat(this, wid);
+      }
       this.db.prepare("UPDATE wakes SET state='handled' WHERE id=?").run(wid);
       return { handled: true };
     }

@@ -198,6 +198,15 @@ Actual questions and plan decisions appear in the conversation and wait for your
 To apply this policy to a retained runner from an older release, interrupt and park it, then resume the same chat.
 Protocol fixtures cover permissions and session transport; they do not establish full native provider verification.
 
+Heartbeat is enabled by default and checks the fleet every ten minutes. Configure it in **Settings > Heartbeat** (1-120 minutes).
+Checks inspect runner identities, working directories, lease retirement, and delayed or uncertain dispatches without running legacy watcher scripts.
+Active managed work receives a concise Firstmate status review; unchanged idle fleets do not start a model turn.
+Automatic delivery waits while dispatch is paused, Firstmate is busy, a question needs your answer, or you have taken over.
+Retained external workers remain observation-only. A quiet running session is a reason to check progress, not proof that it has stalled.
+The dashboard shows the last completed runtime loop, the last and next fleet checks, and health concerns. A loop older than one minute is stale.
+A heartbeat retries at most three presentations, ten minutes apart, until Firstmate acknowledges it with `wake.ack`.
+If retries are exhausted, inspect the conversation, then disable and re-enable heartbeat to retry. Disabling cancels pending heartbeat dispatch, without interrupting an active turn.
+
 To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.
 The browser test uses an installed Chrome and a 10,000-message isolated fixture.
 Raw provider journals and local validation fixtures belong under ignored data directories.

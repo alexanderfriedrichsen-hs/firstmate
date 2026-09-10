@@ -1,3 +1,4 @@
+import { heartbeatStatus } from "./heartbeat.ts";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -265,11 +266,17 @@ export function serve(
             .all(commandStatus[1]),
         });
       }
+      if (u.pathname === "/v1/heartbeat") {
+        if (actor.kind !== "user")
+          return send(404, { error: "Resource not found" });
+        return send(200, heartbeatStatus(store));
+      }
       if (u.pathname === "/v1/snapshot")
         return send(200, {
           tickets: store.tickets(actor),
           conversations: store.conversations(actor),
           policy: store.setting("policy"),
+          heartbeat: actor.kind === "user" ? heartbeatStatus(store) : undefined,
           legacyExternalChanges:
             actor.kind === "user"
               ? store.setting("legacyExternalChanges")
