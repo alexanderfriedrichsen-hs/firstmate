@@ -113,6 +113,13 @@ Independently, `fm-spawn.sh`, `fm-send.sh`, and `fm-teardown.sh` source `bin/fm-
 A normal primary checkout or crewmate worktree has neither signal and remains unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.
 
+## Localhost app ownership fence
+
+The optional [localhost app](../README.md#run-the-localhost-app-in-an-isolated-home) and the legacy bash fleet can both drive the same firstmate home, so they need a fence that keeps them from mutating state at the same time.
+Every legacy `bin/` entrypoint sources `bin/fm-app-fence-lib.sh` and refuses to run, with exit status 3, once a home's `app/control-mode` marker exists.
+The fence holds an inherited shared kernel lock on `app/owner.lock` for the legacy shell's lifetime; the app takes the same lock exclusively before it starts, so a live app instance blocks new legacy commands even in the brief window before it writes the marker.
+`fm-app-fence-lib.sh`'s header owns the exact descriptor, inode-check, and re-validation contract.
+
 ## Two task shapes
 
 Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.

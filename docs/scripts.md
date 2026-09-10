@@ -4,9 +4,11 @@ The first mate drives these; interactive entrypoints work by hand too, while `*-
 Each row is one purpose clause only: the script's own header comment is the authoritative description of its behavior, flags, and contracts, so read the header before first use.
 If you have changed away from the firstmate home in an interactive shell, invoke these scripts by absolute path through the repo's `bin/` directory; the scripts self-locate internally after they start.
 The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm-teardown.sh` is summarized in [architecture.md](architecture.md#no-mistakes-gate-authority-boundary); `fm-gate-refuse-lib.sh`'s header owns its exact contract.
+Every legacy shell entrypoint also sources `fm-app-fence-lib.sh` and refuses to run against a home the [localhost app](../README.md#run-the-localhost-app-in-an-isolated-home) currently owns; its own header owns the exact ownership-fence contract.
 
 | Script                   | Purpose                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------ |
+| `fm-local.mjs`           | Entrypoint for the localhost app CLI (setup, start, status, pause, backup, stop, migration); see the README's "Run the localhost app in an isolated home" |
 | `fm-session-start.sh`    | Compose lock, bootstrap, and wake drain into the single ordered session-start digest |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
@@ -41,6 +43,7 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `fm-review-diff.sh`      | Review a crewmate branch or recorded PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Shared from-firstmate request marker, detector, and idempotent transformation         |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
+| `fm-app-fence-lib.sh`    | Shared ownership fence: every other legacy `bin/` entrypoint refuses to run against a home the localhost app currently owns |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with honest status reporting                |
 | `fm-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `fm-watch.sh`            | Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones |

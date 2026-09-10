@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Thin dispatcher for the localhost app CLI (app/src/server/cli.ts): runs it
+// under tsx without a build step. See the README's "Run the localhost app in
+// an isolated home" for setup, commands, and FM_HOME requirements.
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const loader = fileURLToPath(

@@ -51,6 +51,7 @@ Launching a supported harness inside it instantiates your first mate - and makes
 - **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-X behavior; dry-run preview records would-be replies and dismissals locally before go-live.
 - **Guarded by construction** - the first mate is read-only over your projects outside guarded clone refreshes, safe branch pruning, and approved `local-only` fast-forward merges; crewmates make every project change behind your merge approval.
 - **Restart-proof** - all state lives on disk and in the active session backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected); kill the session anytime and the next one reconciles, including confirmed-dead secondmate agents, and carries on.
+- **Localhost app (in development)** - an optional browser UI over an isolated firstmate home with native Codex, Claude, and Cursor conversations, ticket/artifact/skill browsers, vaporwave themes, and guarded legacy migration; see [Run the localhost app](#run-the-localhost-app-in-an-isolated-home).
 
 Full detail on every feature lives in [docs/architecture.md](docs/architecture.md).
 
@@ -123,7 +124,6 @@ HTML previews run in an isolated frame without network access.
 **Dashboards** separates Firstmate usage from available Codex account allowance and account-wide activity.
 Subscription invoices and a separate count of unrelated activity are unavailable from provider metadata.
 In **Settings > Appearance**, choose system, vaporwave light, or vaporwave dark.
-
 
 To inspect legacy state, use a separate isolated staging home and `import --source /absolute/path/to/legacy-home`.
 Import reads backlog and targeted metadata and status files without running legacy scripts.
