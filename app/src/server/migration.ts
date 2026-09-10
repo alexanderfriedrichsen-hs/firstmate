@@ -459,10 +459,14 @@ export function prepareCutover(
   const ownerFile = path.join(root, "app", "owner.lock");
   if (fs.existsSync(ownerFile)) {
     try {
-      const holders = execFileSync("/usr/sbin/lsof", ["-t", ownerFile], {
-        encoding: "utf8",
-        timeout: 5000,
-      })
+      const holders = execFileSync(
+        process.platform === "linux" ? "/usr/bin/lsof" : "/usr/sbin/lsof",
+        ["-t", ownerFile],
+        {
+          encoding: "utf8",
+          timeout: 5000,
+        },
+      )
         .trim()
         .split(/\s+/)
         .filter(Boolean);

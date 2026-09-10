@@ -16,8 +16,8 @@ export type ProviderAuthStatus = {
   login: Login;
 };
 type RunResult = { code: number | null; output: string };
-export function providerExecutable(provider: AuthProvider) {
-  const names = provider === "claude" ? ["claude"] : ["cursor-agent", "agent"];
+export function providerExecutable(provider: AuthProvider | "codex") {
+  const names = provider === "cursor" ? ["cursor-agent", "agent"] : [provider];
   const dirs = [
     ...(process.env.PATH ?? "").split(path.delimiter),
     path.join(os.homedir(), ".local/bin"),

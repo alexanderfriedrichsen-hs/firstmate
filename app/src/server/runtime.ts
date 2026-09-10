@@ -15,6 +15,7 @@ import { git } from "./revisions.ts";
 import { launchChecks, collectChecks } from "./checks.ts";
 import { retryDecision } from "./revisions.ts";
 import { claudeUsage } from "./usage.ts";
+import { providerExecutable } from "./provider-auth.ts";
 import { alive, atomic } from "./home.ts";
 import { now, type Conversation } from "../contracts.ts";
 const internal = { kind: "user" as const, id: "runtime" };
@@ -520,6 +521,11 @@ export class Runtime {
   async launch(c: Conversation) {
     this.store.assertLeaseActive(c.id);
     this.store.validateModelEffort(c.provider, c.model, c.effort);
+    const executable = providerExecutable(c.provider);
+    if (!executable)
+      throw new Error(
+        `Install ${c.provider === "cursor" ? "Cursor CLI (cursor-agent or agent)" : c.provider === "claude" ? "Claude Code" : "Codex CLI"} on the runtime PATH or in ~/.local/bin before starting a conversation.`,
+      );
     if (c.runnerId) {
       const old = this.identity(c);
       if (old && alive(old.pid, old.startIdentity))
@@ -589,19 +595,6 @@ export class Runtime {
     );
     fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
     const socket = path.join(socketDir, c.runnerId.slice(0, 16) + ".sock");
-    const executable = execFileSync(
-      "/bin/zsh",
-      [
-        "-lc",
-        "command -v " +
-          (c.provider === "codex"
-            ? "codex"
-            : c.provider === "claude"
-              ? "claude"
-              : "agent"),
-      ],
-      { encoding: "utf8" },
-    ).trim();
     const token = randomBytes(32).toString("hex");
     const tokens = this.store.setting("agentTokens") ?? [];
     tokens.push({

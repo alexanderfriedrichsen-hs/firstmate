@@ -1,3 +1,5 @@
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -397,4 +399,55 @@ test("overlapping source and staging trees never approve cutover", async () => {
   );
   store.db.close();
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("cutover fails closed when the platform ownership inspection tool is missing", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fm-lsof-missing-"));
+  const source = path.join(root, "legacy");
+  fs.mkdirSync(path.join(source, "data"), { recursive: true });
+  fs.mkdirSync(path.join(source, "app"));
+  fs.writeFileSync(
+    path.join(source, "data", "backlog.md"),
+    "## Queued\n- task-a1: preserve\n",
+  );
+  fs.writeFileSync(path.join(source, "app", "owner.lock"), "");
+  const repository = fileURLToPath(new URL("../../", import.meta.url));
+  fs.cpSync(path.join(repository, "bin"), path.join(source, "bin"), {
+    recursive: true,
+  });
+  const store = new Store(homePath(path.join(root, "staging")));
+  store.fence();
+  importLegacy(store, source);
+  const original = childProcess.execFileSync;
+  const calls: string[] = [];
+  try {
+    t.mock.method(childProcess, "execFileSync", ((
+      file: string,
+      ...args: any[]
+    ) => {
+      if (file.endsWith("/lsof")) {
+        calls.push(file);
+        throw Object.assign(new Error("lsof missing"), { code: "ENOENT" });
+      }
+      return (original as any)(file, ...args);
+    }) as any);
+    syncBuiltinESMExports();
+    const report = prepareCutover(store, source, repository);
+    assert.deepEqual(calls, [
+      process.platform === "linux" ? "/usr/bin/lsof" : "/usr/sbin/lsof",
+    ]);
+    assert.equal(report.ready, false);
+    assert.ok(
+      report.activeLocks.some(
+        (lock: any) =>
+          lock.path === "app/owner.lock" &&
+          lock.reason === "Could not inspect ownership holders",
+      ),
+    );
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    store.db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

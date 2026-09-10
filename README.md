@@ -63,7 +63,7 @@ The browser is a client of the durable runtime.
 Closing it does not cancel accepted work.
 
 To try the app, use Node.js 24.16 or later, an authenticated Codex CLI, Treehouse, and a non-live source clone.
-The app currently requires a POSIX environment with `/bin/zsh`, Unix sockets, and compatible process inspection tools; native Windows is not supported.
+The app currently requires a POSIX environment with Unix sockets, `ps`, and `lsof`; native Windows is not supported.
 Windows Subsystem for Linux 2 (WSL 2) is unverified, so treat it as an experimental setup.
 Automatic login startup is configured separately for each operating system and is not included when you clone the repository.
 For Joinera, install `joinera-draft-pr-adapter` and `joinera-validation-layer` in `~/.local/bin`, or set `FIRSTMATE_JOINERA_ADAPTER` and `FIRSTMATE_JOINERA_VALIDATION_LAYER` to their absolute executable paths.

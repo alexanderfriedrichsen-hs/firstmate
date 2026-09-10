@@ -34,7 +34,9 @@ export async function nativeCatalog(
   return work;
 }
 async function readCatalog(cwd: string, topic: string) {
-  const child = spawn("codex", ["app-server"], {
+  const executable = providerExecutable("codex");
+  if (!executable) throw Error("Install Codex CLI to load its catalog.");
+  const child = spawn(executable, ["app-server"], {
     cwd,
     stdio: ["pipe", "pipe", "ignore"],
     env: { ...process.env, OPENAI_API_KEY: undefined },
