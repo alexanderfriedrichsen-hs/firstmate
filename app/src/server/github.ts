@@ -1,3 +1,4 @@
+import { joineraTool } from "./joinera-tools.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -70,7 +71,7 @@ export async function collectPullRequests(
         "joinera-report-" + randomUUID() + ".json",
       );
       await run(
-        "/Users/alexander.friedrichsen/.local/bin/joinera-validation-layer",
+        joineraTool("validation"),
         ["report", "--pr", number, "--output", reportFile, "--no-linear"],
         { cwd: source.cwd, maxBuffer: 16 * 1024 * 1024, timeout: 120000 },
       );

@@ -1,3 +1,4 @@
+import { joineraTool } from "./joinera-tools.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
@@ -30,8 +31,7 @@ export function launchChecks(store: Store, ticketId: string, jobId: string) {
         {
           name: "validation",
           env: { JOINERA_CHECK_RUNNER: "yarn" },
-          executable:
-            "/Users/alexander.friedrichsen/.local/bin/joinera-draft-pr-adapter",
+          executable: joineraTool("draft"),
           args: [
             "gate",
             "--base",

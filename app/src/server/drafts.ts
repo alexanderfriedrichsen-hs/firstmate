@@ -1,3 +1,4 @@
+import { joineraTool } from "./joinera-tools.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
@@ -98,8 +99,7 @@ export async function launchDraft(store: Store, job: any) {
     commands: [
       {
         name: "draft",
-        executable:
-          "/Users/alexander.friedrichsen/.local/bin/joinera-draft-pr-adapter",
+        executable: joineraTool("draft"),
         args: [
           "create-draft-pr",
           "--title",
