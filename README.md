@@ -57,7 +57,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 ## Run the localhost app in an isolated home
 
 The localhost app is under development.
-It uses native Codex App Server conversations, subscription-authenticated Claude workers, SQLite write-ahead logging, and separate Treehouse leases for workers, checks, and reviews.
+It uses native Codex App Server conversations, subscription-authenticated Claude and Cursor sessions, SQLite write-ahead logging, and separate Treehouse leases for workers, checks, and reviews.
 The browser is a client of the durable runtime.
 Closing it does not cancel accepted work.
 
@@ -166,8 +166,19 @@ Retirement checks the exact lease, clean checkout, settled sessions, and preserv
 
 Codex streaming, permission replies, takeover, exact resume, native worker dispatch, and independent revision-bound review have isolated integration coverage.
 Claude worker startup, exact-session resume, streaming, permission presentation, and interruption have isolated coverage.
-Permission approval and supervisor rollout remain gated; the latest probe stopped when rate-limit fields disagreed about overage usage.
-Cursor stays unavailable because an account-bound hard cap of 5,000 input plus output tokens per calendar month has not been proven enforceable.
+To sign in to Claude or Cursor, open **Settings > Providers** and select **Sign in**.
+The native provider CLI opens your default browser, and the app refreshes connection status after you finish authentication.
+Credentials stay in the provider's native credential store; the app does not collect passwords or store authentication links in browser storage.
+Install the provider CLI if the sign-in button reports it missing.
+To switch Firstmate providers, select **New chat**, choose a provider, model, and supported thinking effort, and create the chat.
+Your previous conversation remains available, and the new chat starts with automatic work paused.
+Use **Model** to change the model and supported effort for the next turn with the current provider.
+
+Cursor uses its native Agent Client Protocol (ACP) connection and your signed-in subscription.
+Reported session usage appears in the app when the provider supplies it; missing usage is not treated as zero.
+The app does not enforce an account-wide token cap or change subscription billing settings.
+Native permission requests appear in the conversation for a one-time approval or denial.
+Protocol fixtures cover permissions and session transport; they do not establish full native provider verification.
 
 To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.
 The browser test uses an installed Chrome and a 10,000-message isolated fixture.

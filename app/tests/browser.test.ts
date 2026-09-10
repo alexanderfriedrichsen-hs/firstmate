@@ -123,6 +123,22 @@ test(
           .isDisabled(),
         false,
       );
+      let restartPayload: any;
+      await page.route("**/v1/commands", (route) => {
+        restartPayload = route.request().postDataJSON();
+        return route.fulfill({ json: { ok: true } });
+      });
+      await page
+        .getByRole("button", { name: "Create new chat", exact: true })
+        .click();
+      assert.equal(restartPayload.type, "conversation.restart");
+      assert.deepEqual(restartPayload.payload, {
+        provider: "claude",
+        model: "small",
+        effort: "low",
+      });
+      await page.unroute("**/v1/commands");
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
       await page.getByLabel("New chat provider").selectOption("cursor");
       assert.equal(
         await page.getByLabel("New chat thinking effort").inputValue(),
@@ -383,6 +399,59 @@ test(
       );
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "hidden" });
+      await page.getByRole("button", { name: "Work", exact: true }).click();
+      for (const [decision, options] of [
+        ["accept", [{ kind: "allow_once", optionId: "once" }]],
+        ["decline", [{ kind: "allow_always", optionId: "always" }]],
+      ] as const) {
+        const permissionId = randomUUID();
+        store.db
+          .prepare("INSERT INTO permissions VALUES(?,?,?,?)")
+          .run(
+            permissionId,
+            cid,
+            "pending",
+            JSON.stringify({
+              method: "cursor/tool",
+              incarnation: 0,
+              params: {
+                toolCall: { title: "Cursor permission fixture" },
+                options,
+              },
+            }),
+          );
+        await page.reload();
+        await page.getByText("Permission requested", { exact: true }).waitFor();
+        assert.equal(
+          await page
+            .getByRole("button", { name: "Allow once", exact: true })
+            .isDisabled(),
+          decision === "decline",
+        );
+        await page
+          .getByRole("button", {
+            name: decision === "accept" ? "Allow once" : "Deny",
+            exact: true,
+          })
+          .click();
+        await page
+          .getByText("Permission requested", { exact: true })
+          .waitFor({ state: "hidden" });
+        assert.equal(
+          (
+            store.db
+              .prepare("SELECT state FROM permissions WHERE id=?")
+              .get(permissionId) as any
+          ).state,
+          "answering",
+        );
+        const outbox = store.db
+          .prepare(
+            "SELECT payload FROM outbox WHERE kind='permission.reply' ORDER BY rowid DESC LIMIT 1",
+          )
+          .get() as any;
+        assert.equal(JSON.parse(outbox.payload).decision, decision);
+      }
       const reviewTicket = store.command(
         { kind: "user", id: "test" },
         {

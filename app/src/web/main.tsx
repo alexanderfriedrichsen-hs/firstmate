@@ -1292,6 +1292,20 @@ function Chat({
               Deny
             </button>
             <button
+              disabled={
+                p.data.method === "cursor/tool" &&
+                !(p.data.params?.options ?? []).some(
+                  (option: any) => option.kind === "allow_once",
+                )
+              }
+              title={
+                p.data.method === "cursor/tool" &&
+                !(p.data.params?.options ?? []).some(
+                  (option: any) => option.kind === "allow_once",
+                )
+                  ? "Cursor did not offer a one-time approval. Deny this request to continue safely."
+                  : undefined
+              }
               onClick={() =>
                 act(
                   "permission.reply",
