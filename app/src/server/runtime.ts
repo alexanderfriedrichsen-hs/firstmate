@@ -18,6 +18,10 @@ import { claudeUsage } from "./usage.ts";
 import { alive, atomic } from "./home.ts";
 import { now, type Conversation } from "../contracts.ts";
 const internal = { kind: "user" as const, id: "runtime" };
+export function shellArgument(value: string): string {
+  return "'" + value.replaceAll("'", "'\"'\"'") + "'";
+}
+
 export class Runtime {
   busy = false;
   stopped = false;
@@ -628,7 +632,7 @@ export class Runtime {
       (c.role === "supervisor"
         ? "Use the scoped Firstmate agent CLI to inspect managed tickets and submit commands. Human-only records are unavailable."
         : "") +
-      ` Agent CLI: ${process.execPath} --import ${loader} ${cli}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.`;
+      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.`;
     recordContext(
       this.store,
       c,

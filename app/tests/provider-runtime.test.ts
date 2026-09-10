@@ -157,3 +157,19 @@ test("Cursor permission IDs are globally unique and cancelled options cannot app
   b.acp.permission(b.events[0].payload.id, "accept");
   assert.equal(b.calls.at(-1).result.outcome.optionId, "once");
 });
+
+test("agent CLI shell arguments preserve spaces and shell metacharacters", async () => {
+  const { shellArgument } = await import("../src/server/runtime.ts");
+  const { execFileSync } = await import("node:child_process");
+  const values = [
+    "/Library/Application Support/Firstmate/cli.ts",
+    "/tmp/a'b/loader.mjs",
+    "/tmp/$(touch SHOULD_NOT_EXIST)`echo bad`$HOME",
+  ];
+  const result = execFileSync(
+    "/bin/sh",
+    ["-c", "printf '%s\\n' " + values.map(shellArgument).join(" ")],
+    { encoding: "utf8" },
+  );
+  assert.deepEqual(result.trimEnd().split("\n"), values);
+});
