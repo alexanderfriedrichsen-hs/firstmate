@@ -774,6 +774,7 @@ test(
         JSON.stringify({
           kind: "question",
           method: "fixture/question",
+          url: "https://example.com/sign-in",
           incarnation: 0,
           questions: [
             {
@@ -800,6 +801,12 @@ test(
         name: "Questions from Firstmate",
       });
       await questionForm.waitFor();
+      assert.equal(
+        await questionForm
+          .getByRole("link", { name: "Open provider sign-in", exact: true })
+          .getAttribute("href"),
+        "https://example.com/sign-in",
+      );
       assert.equal(
         await questionForm
           .getByRole("button", { name: "Send answers", exact: true })
@@ -859,56 +866,43 @@ test(
         ),
         false,
       );
-      for (const [decision, options] of [
-        ["accept", [{ kind: "allow_once", optionId: "once" }]],
-        ["decline", [{ kind: "allow_always", optionId: "always" }]],
-      ] as const) {
-        const permissionId = randomUUID();
-        store.db.prepare("INSERT INTO permissions VALUES(?,?,?,?)").run(
-          permissionId,
-          cid,
-          "pending",
-          JSON.stringify({
-            method: "cursor/tool",
-            incarnation: 0,
-            params: {
-              toolCall: { title: "Cursor permission fixture" },
-              options,
-            },
-          }),
-        );
-        await page.reload();
-        await page.getByText("Permission requested", { exact: true }).waitFor();
-        assert.equal(
-          await page
-            .getByRole("button", { name: "Allow once", exact: true })
-            .isDisabled(),
-          decision === "decline",
-        );
+      const unsupportedId = randomUUID();
+      store.db.prepare("INSERT INTO permissions VALUES(?,?,?,?)").run(
+        unsupportedId,
+        cid,
+        "pending",
+        JSON.stringify({
+          method: "mcpServer/elicitation/request",
+          incarnation: 0,
+          params: { requestedSchema: { type: "object" } },
+        }),
+      );
+      await page.reload();
+      await page
+        .getByText("Provider request needs attention", { exact: true })
+        .waitFor();
+      assert.equal(
         await page
-          .getByRole("button", {
-            name: decision === "accept" ? "Allow once" : "Deny",
-            exact: true,
-          })
-          .click();
-        await page
-          .getByText("Permission requested", { exact: true })
-          .waitFor({ state: "hidden" });
-        assert.equal(
-          (
-            store.db
-              .prepare("SELECT state FROM permissions WHERE id=?")
-              .get(permissionId) as any
-          ).state,
-          "answering",
-        );
-        const outbox = store.db
-          .prepare(
-            "SELECT payload FROM outbox WHERE kind='permission.reply' ORDER BY rowid DESC LIMIT 1",
-          )
-          .get() as any;
-        assert.equal(JSON.parse(outbox.payload).decision, decision);
-      }
+          .getByRole("button", { name: "Allow once", exact: true })
+          .count(),
+        0,
+      );
+      const stopped = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/v1/commands") &&
+          response.request().postDataJSON().type === "conversation.interrupt",
+      );
+      await page
+        .getByRole("button", { name: "Stop this turn", exact: true })
+        .click();
+      await stopped;
+      const stop = store.db
+        .prepare("SELECT kind FROM outbox ORDER BY rowid DESC LIMIT 1")
+        .get() as any;
+      assert.equal(stop.kind, "conversation.interrupt");
+      store.db
+        .prepare("UPDATE permissions SET state='expired' WHERE id=?")
+        .run(unsupportedId);
       const reviewTicket = store.command(
         { kind: "user", id: "test" },
         {

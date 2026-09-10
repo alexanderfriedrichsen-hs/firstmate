@@ -1431,46 +1431,20 @@ function Chat({
               }}
             />
           ) : (
-            <div className="permission" key={p.id}>
-              <strong>Permission requested</strong>
-              <pre>{JSON.stringify(p.data.item ?? p.data.params, null, 2)}</pre>
+            <div className="permission" key={p.id} role="status">
+              <strong>Provider request needs attention</strong>
+              <p>
+                This request could not be handled automatically. Stop this turn
+                to clear the pending request; your conversation history stays
+                available.
+              </p>
+              <small>Request type: {p.data.method ?? "Unknown"}</small>
               <button
                 onClick={() =>
-                  act(
-                    "permission.reply",
-                    { requestId: p.id, decision: "decline" },
-                    c.id,
-                    c.version,
-                  )
+                  act("conversation.interrupt", {}, c.id, c.version)
                 }
               >
-                Deny
-              </button>
-              <button
-                disabled={
-                  p.data.method === "cursor/tool" &&
-                  !(p.data.params?.options ?? []).some(
-                    (option: any) => option.kind === "allow_once",
-                  )
-                }
-                title={
-                  p.data.method === "cursor/tool" &&
-                  !(p.data.params?.options ?? []).some(
-                    (option: any) => option.kind === "allow_once",
-                  )
-                    ? "Cursor did not offer a one-time approval. Deny this request to continue safely."
-                    : undefined
-                }
-                onClick={() =>
-                  act(
-                    "permission.reply",
-                    { requestId: p.id, decision: "accept" },
-                    c.id,
-                    c.version,
-                  )
-                }
-              >
-                Allow once
+                Stop this turn
               </button>
             </div>
           ),

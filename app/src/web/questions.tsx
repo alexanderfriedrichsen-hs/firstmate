@@ -12,6 +12,18 @@ export function UserQuestions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const questions = request.data.questions ?? [];
+  let externalUrl: string | undefined;
+  try {
+    const url = new URL(request.data.url);
+    if (
+      ["https:", "http:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+    )
+      externalUrl = url.href;
+  } catch {
+    /* No supported external URL was provided. */
+  }
   const answers = Object.fromEntries(
     questions.map((q: any) => [
       q.id,
@@ -51,6 +63,14 @@ export function UserQuestions({
       }}
     >
       <strong>Your input is needed</strong>
+      {externalUrl && (
+        <p>
+          <a href={externalUrl} target="_blank" rel="noopener noreferrer">
+            Open provider sign-in
+          </a>
+          . Complete the browser step before continuing.
+        </p>
+      )}
       {questions.map((q: any) => (
         <fieldset key={q.id} disabled={busy}>
           <legend>{q.header || "Question"}</legend>
