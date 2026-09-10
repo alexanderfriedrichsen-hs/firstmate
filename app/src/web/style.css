@@ -1252,3 +1252,27 @@ select:focus-visible {
   display: block;
   color: var(--muted);
 }
+.slash-menu {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+.slash-menu [role="option"] {
+  padding: 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.slash-menu [aria-selected="true"] {
+  background: var(--accent);
+}
+.slash-menu [role="option"] span {
+  float: right;
+  font-size: 11px;
+}
+.slash-menu [role="option"] small {
+  display: block;
+}

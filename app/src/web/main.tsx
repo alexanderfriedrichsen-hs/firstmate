@@ -922,6 +922,82 @@ function Chat({
       return [];
     }
   });
+  const [slashSkills, setSlashSkills] = useState<any[]>([]);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashError, setSlashError] = useState("");
+  const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1];
+  const slashOpen =
+    slashQuery !== undefined && !slashDismissed && !outer.retiredAt;
+  useEffect(() => {
+    if (!slashOpen || outer.provider !== "codex") return;
+    let live = true;
+    setSlashError("");
+    void api("catalog?topic=skills&conversationId=" + outer.id)
+      .then((result) => {
+        if (live)
+          setSlashSkills(
+            result.data
+              .flatMap((entry: any) => entry.skills ?? [])
+              .filter((skill: any) => skill.enabled),
+          );
+      })
+      .catch((e) => live && setSlashError(String(e)));
+    return () => {
+      live = false;
+    };
+  }, [slashOpen, outer.id, outer.provider]);
+  const slashItems = [
+    ...["skills", "artifacts", "context"].map((name) => ({
+      id: "command:" + name,
+      name,
+      description: "Open " + name + " browser",
+      kind: "App command",
+    })),
+    ...(data?.nativeCommands ?? []).map((command: any) => ({
+      ...command,
+      id: "native:" + command.name,
+      kind: "Provider command",
+    })),
+    ...(outer.provider === "codex" ? slashSkills : []).map((skill) => ({
+      ...skill,
+      id: "skill:" + skill.path,
+      kind: "Skill",
+    })),
+  ].filter((item) =>
+    (item.name + " " + item.description)
+      .toLowerCase()
+      .includes((slashQuery ?? "").toLowerCase()),
+  );
+  useEffect(() => {
+    if (slashOpen)
+      document
+        .getElementById("slash-option-" + outer.id + "-" + slashIndex)
+        ?.scrollIntoView({ block: "nearest" });
+  }, [slashIndex, slashOpen, outer.id]);
+  const chooseSlash = (item: any) => {
+    if (!item) return;
+    if (item.kind === "Skill") {
+      const next = [
+        ...skills.filter((skill) => skill.path !== item.path),
+        { name: item.name, path: item.path },
+      ].slice(-4);
+      setSkills(next);
+      localStorage.setItem("skills:" + outer.id, JSON.stringify(next));
+      const text = "Use $" + item.name + " to ";
+      setDraft(text);
+      localStorage.setItem("draft:" + outer.id, text);
+    } else if (item.kind === "Provider command") {
+      const text = "/" + item.name + " ";
+      setDraft(text);
+      localStorage.setItem("draft:" + outer.id, text);
+    } else {
+      setDraft("");
+      localStorage.removeItem("draft:" + outer.id);
+      location.hash = item.name;
+    }
+    setSlashDismissed(true);
+  };
   const [chatError, setChatError] = useState("");
   const [search, setSearch] = useState("");
   const [older, setOlder] = useState<any[]>([]);
@@ -1366,8 +1442,53 @@ function Chat({
             command ID.
           </small>
         )}
+        {slashOpen && (
+          <div className="slash-menu">
+            <div className="help">Skills and app commands</div>
+            {slashError && (
+              <p role="status">Skills could not load: {slashError}</p>
+            )}
+            {outer.provider !== "codex" && (
+              <p className="help">
+                Explicit skill attachments are available with Codex. Provider
+                commands appear after this session advertises them.
+              </p>
+            )}
+            <div
+              role="listbox"
+              id={"slash-options-" + outer.id}
+              aria-label="Skills and commands"
+            >
+              {slashItems.map((item, index) => (
+                <div
+                  role="option"
+                  id={"slash-option-" + outer.id + "-" + index}
+                  key={item.id}
+                  aria-selected={index === slashIndex}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => chooseSlash(item)}
+                >
+                  <strong>/{item.name}</strong>
+                  <span>{item.kind}</span>
+                  <small>{item.description}</small>
+                </div>
+              ))}
+            </div>
+            {!slashItems.length && (
+              <p role="status">No matching skills or commands</p>
+            )}
+          </div>
+        )}
         <textarea
           aria-label="Message"
+          aria-autocomplete="list"
+          aria-controls={slashOpen ? "slash-options-" + outer.id : undefined}
+          aria-expanded={slashOpen}
+          aria-activedescendant={
+            slashOpen && slashItems[slashIndex]
+              ? "slash-option-" + outer.id + "-" + slashIndex
+              : undefined
+          }
           disabled={!!c.retiredAt}
           placeholder={
             c.state === "running"
@@ -1381,9 +1502,37 @@ function Chat({
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
+            setSlashDismissed(false);
+            setSlashIndex(0);
             localStorage.setItem("draft:" + c.id, e.target.value);
           }}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)
+              return;
+            if (slashOpen) {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSlashDismissed(true);
+                return;
+              }
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex((index) =>
+                  slashItems.length
+                    ? (index +
+                        (e.key === "ArrowDown" ? 1 : -1) +
+                        slashItems.length) %
+                      slashItems.length
+                    : 0,
+                );
+                return;
+              }
+              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                e.preventDefault();
+                chooseSlash(slashItems[slashIndex]);
+                return;
+              }
+            }
             if (
               e.key === "Enter" &&
               !e.shiftKey &&

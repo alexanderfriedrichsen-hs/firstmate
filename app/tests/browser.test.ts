@@ -217,6 +217,108 @@ test(
         buffer: Buffer.from("Attachment fixture."),
       });
       await page.getByRole("button", { name: "note.txt ×" }).waitFor();
+      await page.route("**/v1/catalog?topic=skills&conversationId=*", (route) =>
+        route.fulfill({
+          json: {
+            data: [
+              {
+                skills: [
+                  {
+                    name: "no-mistakes",
+                    path: "/fixture/no-mistakes/SKILL.md",
+                    description: "Validate changes before shipping",
+                    enabled: true,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      await page.route("**/v1/conversations/" + cid, async (route) => {
+        const response = await route.fetch();
+        const detail = await response.json();
+        await route.fulfill({
+          json: {
+            ...detail,
+            nativeCommands: [
+              { name: "compact", description: "Compact this provider session" },
+            ],
+          },
+        });
+      });
+      store.event("conversation.updated", cid, {});
+      const slashComposer = page.getByRole("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      await slashComposer.fill("/");
+      await page
+        .getByRole("listbox", { name: "Skills and commands" })
+        .waitFor();
+      await page
+        .getByRole("option")
+        .filter({ hasText: "/no-mistakes" })
+        .waitFor();
+      await slashComposer.press("ArrowDown");
+      assert.equal(
+        await page
+          .getByRole("option")
+          .filter({ hasText: "/artifacts" })
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      await slashComposer.fill("/no-mis");
+      await slashComposer.press("Enter");
+      assert.equal(await slashComposer.inputValue(), "Use $no-mistakes to ");
+      await page
+        .getByRole("button", { name: "$no-mistakes ×", exact: true })
+        .waitFor();
+      let skillPayload: any;
+      await page.route("**/v1/commands", (route) => {
+        skillPayload = route.request().postDataJSON();
+        return route.fulfill({ json: { ok: true } });
+      });
+      await slashComposer.press("Enter");
+      await page
+        .getByRole("button", { name: "$no-mistakes ×", exact: true })
+        .waitFor({ state: "hidden" });
+      assert.deepEqual(skillPayload.payload.skills, [
+        { name: "no-mistakes", path: "/fixture/no-mistakes/SKILL.md" },
+      ]);
+      await page.unroute("**/v1/commands");
+      await slashComposer.fill("/compact");
+      await page
+        .getByRole("option")
+        .filter({ hasText: "Provider command" })
+        .waitFor();
+      await slashComposer.press("Tab");
+      assert.equal(await slashComposer.inputValue(), "/compact ");
+      assert.equal(
+        await page
+          .getByRole("button", { name: "$compact ×", exact: true })
+          .count(),
+        0,
+      );
+      await page.unroute("**/v1/conversations/" + cid);
+      await slashComposer.fill("/context");
+      await slashComposer.press("Escape");
+      await page
+        .getByRole("listbox", { name: "Skills and commands" })
+        .waitFor({ state: "hidden" });
+      assert.equal(await slashComposer.inputValue(), "/context");
+      await slashComposer.fill("/skills");
+      await slashComposer.press("Shift+Enter");
+      assert.equal(await slashComposer.inputValue(), "/skills\n");
+      await slashComposer.fill("/context");
+      await slashComposer.press("Tab");
+      await page.getByLabel("Context session").waitFor();
+      await page.getByRole("button", { name: "Work", exact: true }).click();
+      await page.getByLabel("Attach file", { exact: true }).setInputFiles({
+        name: "note.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Attachment fixture."),
+      });
       let drop = true;
       await page.route("**/v1/commands", async (route) => {
         const input = route.request().postDataJSON();
