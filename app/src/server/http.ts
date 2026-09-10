@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Store } from "./store.ts";
 import { hydrateContext } from "./library.ts";
 import { nativeCatalog } from "./catalog.ts";
+import { ProviderAuth, type AuthProvider } from "./provider-auth.ts";
 import type { Actor } from "../contracts.ts";
 import { capabilities } from "../contracts.ts";
 const equal = (a: string, b: string) => {
@@ -13,7 +14,11 @@ const equal = (a: string, b: string) => {
     y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 };
-export function serve(store: Store, port: number) {
+export function serve(
+  store: Store,
+  port: number,
+  providerAuth = new ProviderAuth(),
+) {
   const session = randomBytes(32).toString("hex");
   const csrf = randomBytes(32).toString("hex");
   const origin = `http://127.0.0.1:${port}`;
@@ -99,16 +104,31 @@ export function serve(store: Store, port: number) {
           if (Buffer.byteLength(body) > 1024 * 1024)
             return send(413, { error: "Request too large" });
         }
+        const authAction = u.pathname.match(
+          /^\/v1\/providers\/(claude|cursor)\/(login|cancel)$/,
+        );
+        if (authAction) {
+          if (actor.kind !== "user" || bearer)
+            return send(404, { error: "Resource not found" });
+          store.assertOwner();
+          const provider = authAction[1] as AuthProvider;
+          return send(
+            200,
+            await (authAction[2] === "login"
+              ? providerAuth.login(provider)
+              : providerAuth.cancel(provider)),
+          );
+        }
         if (u.pathname === "/v1/commands") {
           const command = JSON.parse(body);
           if (command.type === "conversation.model") {
             const c = store.conversation(command.targetId, actor);
-            if (actor.kind !== "user" || c.provider !== "codex")
+            if (actor.kind !== "user")
               return send(403, {
                 error:
                   "Model switching currently supports Codex through the operator controls.",
               });
-            const catalog = await nativeCatalog(c.cwd, "models");
+            const catalog = await nativeCatalog(c.cwd, "models", c.provider);
             if (
               !catalog.data.some((m: any) => m.model === command.payload.model)
             )
@@ -121,6 +141,7 @@ export function serve(store: Store, port: number) {
             const effort =
               command.payload.effort || selected.defaultReasoningEffort;
             if (
+              selected.supportedReasoningEfforts.length > 0 &&
               !selected.supportedReasoningEfforts.some(
                 (e: any) => e.reasoningEffort === effort,
               )
@@ -128,8 +149,15 @@ export function serve(store: Store, port: number) {
               return send(400, {
                 error: "Choose a supported thinking effort for this model.",
               });
+            if (!selected.supportedReasoningEfforts.length && effort)
+              return send(400, {
+                error:
+                  "This provider model does not advertise thinking effort controls.",
+              });
             command.payload.effort = effort;
-            store.setting("modelCatalog", catalog.data);
+            store.setting("providerModelCatalog." + c.provider, catalog.data);
+            if (c.provider === "codex")
+              store.setting("modelCatalog", catalog.data);
           }
           const result = store.command(actor, command);
           return send(202, {
@@ -141,6 +169,11 @@ export function serve(store: Store, port: number) {
       }
       if (req.method !== "GET")
         return send(405, { error: "Method not allowed" });
+      if (u.pathname === "/v1/providers") {
+        if (actor.kind !== "user" || bearer)
+          return send(404, { error: "Resource not found" });
+        return send(200, await providerAuth.list());
+      }
       if (["/v1/catalog", "/v1/context", "/v1/library"].includes(u.pathname)) {
         if (actor.kind !== "user")
           return send(404, { error: "Resource not found" });
@@ -158,7 +191,16 @@ export function serve(store: Store, port: number) {
           const result = await nativeCatalog(
             cwd,
             topic as "skills" | "models" | "account",
+            topic === "models"
+              ? (u.searchParams.get("provider") ?? c?.provider ?? "codex")
+              : "codex",
           );
+          if (topic === "models")
+            store.setting(
+              "providerModelCatalog." +
+                (u.searchParams.get("provider") ?? c?.provider ?? "codex"),
+              result.data,
+            );
           if (topic === "skills" && c)
             store.setting(
               "skills:" + c.id,
@@ -404,6 +446,7 @@ export function serve(store: Store, port: number) {
     start: () =>
       new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve)),
     close: () => {
+      providerAuth.close();
       for (const c of clients) c.end();
       server.close();
     },

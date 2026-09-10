@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { providerExecutable, subscriptionEnv } from "./provider-auth.ts";
 import { createInterface } from "node:readline";
 
 const cache = new Map<string, { at: number; value: any }>();
@@ -7,12 +9,21 @@ const pending = new Map<string, Promise<any>>();
 export async function nativeCatalog(
   cwd: string,
   topic: "skills" | "models" | "account",
+  provider = "codex",
 ) {
-  const key = topic + ":" + cwd;
+  const key = provider + ":" + topic + ":" + cwd;
   const saved = cache.get(key);
   if (saved && Date.now() - saved.at < 60000) return saved.value;
   if (pending.has(key)) return pending.get(key);
-  const work = readCatalog(cwd, topic)
+  const work = (
+    provider === "claude" && topic === "models"
+      ? claudeModels(cwd)
+      : provider === "cursor" && topic === "models"
+        ? cursorModels(cwd)
+        : provider === "codex"
+          ? readCatalog(cwd, topic)
+          : Promise.reject(Error("Provider catalog is unavailable"))
+  )
     .then((value) => {
       cache.set(key, { at: Date.now(), value });
       return value;
@@ -112,4 +123,91 @@ async function readCatalog(cwd: string, topic: string) {
     child.kill("SIGTERM");
     fail();
   }
+}
+
+async function claudeModels(cwd: string) {
+  const executable = providerExecutable("claude");
+  if (!executable) throw Error("Install Claude Code to load models.");
+  const controller = new AbortController();
+  const client = query({
+    prompt: (async function* () {})(),
+    options: {
+      cwd,
+      pathToClaudeCodeExecutable: executable,
+      abortController: controller,
+      settingSources: [],
+      env: subscriptionEnv(),
+    },
+  });
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const models = await client.supportedModels();
+    return {
+      data: models.map((m) => {
+        const levels = m.supportedEffortLevels ?? [];
+        return {
+          model: m.value,
+          displayName: m.displayName,
+          description: m.description,
+          defaultReasoningEffort: levels.includes("high")
+            ? "high"
+            : (levels[0] ?? ""),
+          supportedReasoningEfforts: levels.map((reasoningEffort) => ({
+            reasoningEffort,
+            description: reasoningEffort,
+          })),
+        };
+      }),
+      observedAt: new Date().toISOString(),
+    };
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    client.close();
+  }
+}
+
+export function parseCursorModels(output: string) {
+  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
+  if (!clean.includes("Available models"))
+    throw Error("Sign in to Cursor to load available models.");
+  return clean.split("\n").flatMap((line) => {
+    const match = line.match(/^([a-zA-Z0-9][a-zA-Z0-9_.:/\[\],=+-]*) - (.+)$/);
+    if (!match) return [];
+    return [
+      {
+        model: match[1],
+        displayName: match[2].replace(
+          / \((?:current|default)(?:, (?:current|default))*\)$/,
+          "",
+        ),
+        defaultReasoningEffort: "",
+        supportedReasoningEfforts: [],
+      },
+    ];
+  });
+}
+async function cursorModels(cwd: string) {
+  const executable = providerExecutable("cursor");
+  if (!executable) throw Error("Install Cursor CLI to load models.");
+  const output = await new Promise<string>((resolve, reject) =>
+    execFile(
+      executable,
+      ["models"],
+      { cwd, env: subscriptionEnv(), timeout: 15000, maxBuffer: 1024 * 1024 },
+      (error, stdout) =>
+        error
+          ? reject(Error("Sign in to Cursor to load available models."))
+          : resolve(stdout),
+    ),
+  );
+  const data = parseCursorModels(output);
+  if (!data.length)
+    throw Error("Cursor did not return a supported model catalog.");
+  return {
+    data,
+    observedAt: new Date().toISOString(),
+    effortReason:
+      "Cursor does not publish supported effort levels in its model catalog.",
+  };
 }
