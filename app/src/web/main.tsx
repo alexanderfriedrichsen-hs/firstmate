@@ -1285,14 +1285,22 @@ function Chat({
             <UserQuestions
               key={p.id}
               request={p}
-              reply={(answers) =>
-                act(
+              reply={async (answers) => {
+                await command(
                   "permission.reply",
                   { requestId: p.id, answers },
                   c.id,
                   c.version,
-                )
-              }
+                );
+                setData((current: any) => ({
+                  ...current,
+                  permissions: current.permissions.map((request: any) =>
+                    request.id === p.id
+                      ? { ...request, state: "answering" }
+                      : request,
+                  ),
+                }));
+              }}
             />
           ) : (
             <div className="permission" key={p.id}>

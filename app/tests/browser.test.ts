@@ -528,6 +528,30 @@ test(
       await questionForm
         .getByLabel("Details answer")
         .fill("private fixture reply");
+      await page.route("**/v1/commands", (route) =>
+        route.fulfill({
+          status: 409,
+          json: { error: "Question answer could not be saved. Try again." },
+        }),
+      );
+      await questionForm
+        .getByRole("button", { name: "Send answers", exact: true })
+        .click();
+      await questionForm
+        .getByRole("alert")
+        .filter({ hasText: "Question answer could not be saved" })
+        .waitFor();
+      assert.equal(
+        await questionForm.getByLabel("Details answer").inputValue(),
+        "private fixture reply",
+      );
+      assert.equal(
+        await questionForm
+          .getByRole("radio", { name: "North Go north" })
+          .isChecked(),
+        true,
+      );
+      await page.unroute("**/v1/commands");
       await questionForm
         .getByRole("button", { name: "Send answers", exact: true })
         .click();

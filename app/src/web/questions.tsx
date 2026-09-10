@@ -17,8 +17,10 @@ export function UserQuestions({
       q.id,
       {
         answers: [
-          ...(selected[q.id] ?? []),
-          ...(other[q.id]?.trim() ? [other[q.id].trim()] : []),
+          ...new Set([
+            ...(selected[q.id] ?? []),
+            ...(other[q.id]?.trim() ? [other[q.id].trim()] : []),
+          ]),
         ],
       },
     ]),
@@ -28,6 +30,7 @@ export function UserQuestions({
     questions.every(
       (q: any) =>
         answers[q.id].answers.length > 0 &&
+        answers[q.id].answers.length <= 50 &&
         (q.multiSelect || answers[q.id].answers.length === 1),
     );
   return (
@@ -43,7 +46,6 @@ export function UserQuestions({
           await reply(answers);
         } catch (e) {
           setError(String(e));
-        } finally {
           setBusy(false);
         }
       }}
@@ -87,6 +89,7 @@ export function UserQuestions({
                 aria-label={(q.header || q.question) + " answer"}
                 type={q.isSecret ? "password" : "text"}
                 autoComplete="off"
+                maxLength={20000}
                 value={other[q.id] ?? ""}
                 onChange={(e) => {
                   setOther((current) => ({
