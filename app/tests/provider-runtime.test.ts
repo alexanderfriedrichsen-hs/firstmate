@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-function fake() {
+function fake(fullAccess = false) {
   const calls: any[] = [],
     events: any[] = [];
   const child = new EventEmitter() as any;
@@ -29,6 +29,7 @@ function fake() {
     "/tmp",
     (type, payload) => events.push({ type, payload }),
     child,
+    fullAccess,
   );
   const response = (id: number, result: any) =>
     child.stdout.write(JSON.stringify({ id, result }) + "\n");
@@ -172,4 +173,103 @@ test("agent CLI shell arguments preserve spaces and shell metacharacters", async
     { encoding: "utf8" },
   );
   assert.deepEqual(result.trimEnd().split("\n"), values);
+});
+
+test("Cursor full access approves offered tool permissions but waits for real questions", () => {
+  const f = fake(true);
+  f.acp.sessionId = "exact";
+  f.child.stdout.write(
+    JSON.stringify({
+      id: 100,
+      method: "session/request_permission",
+      params: {
+        sessionId: "exact",
+        options: [{ kind: "allow_always", optionId: "persistent" }],
+      },
+    }) + "\n",
+  );
+  assert.equal(f.calls.at(-1).result.outcome.optionId, "persistent");
+  assert.ok(!f.events.some((e) => e.type === "permission.request"));
+  const question = {
+    id: 101,
+    method: "cursor/ask_question",
+    params: {
+      questions: [
+        {
+          id: "flavor",
+          prompt: "Pick one",
+          options: [
+            { id: "native-a", label: "A" },
+            { id: "native-b", label: "B" },
+          ],
+        },
+      ],
+    },
+  };
+  f.child.stdout.write(JSON.stringify(question) + "\n");
+  const pending = f.events.find((e) => e.payload.kind === "question").payload;
+  assert.ok(!f.calls.some((c) => c.id === 101));
+  assert.throws(
+    () => f.acp.answer(pending.id, { flavor: { answers: ["unknown"] } }),
+    /offered/,
+  );
+  f.acp.answer(pending.id, { flavor: { answers: ["B"] } });
+  assert.deepEqual(f.calls.at(-1).result, {
+    outcome: {
+      outcome: "answered",
+      answers: [{ questionId: "flavor", selectedOptionIds: ["native-b"] }],
+    },
+  });
+  assert.throws(
+    () => f.acp.answer(pending.id, { flavor: { answers: ["B"] } }),
+    /no longer pending/,
+  );
+  f.child.stdout.write(JSON.stringify({ ...question, id: 102 }) + "\n");
+  const next = f.events
+    .filter((e) => e.payload.kind === "question")
+    .at(-1).payload;
+  f.acp.cancel();
+  assert.ok(
+    f.calls.some(
+      (c) => c.id === 102 && c.result.outcome.outcome === "cancelled",
+    ),
+  );
+  assert.throws(
+    () => f.acp.answer(next.id, { flavor: { answers: ["A"] } }),
+    /no longer pending/,
+  );
+});
+
+test("Cursor new and resumed full-access sessions select only an advertised agent mode", async () => {
+  for (const resume of [undefined, "exact"]) {
+    for (const advertised of [true, false]) {
+      const f = fake(true);
+      const initialized = f.acp.initialize("/tmp", resume);
+      f.response(f.calls[0].id, {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true },
+      });
+      await new Promise((r) => setImmediate(r));
+      f.response(f.calls[1].id, {});
+      await new Promise((r) => setImmediate(r));
+      assert.equal(f.calls[2].method, resume ? "session/load" : "session/new");
+      f.response(f.calls[2].id, {
+        sessionId: "exact",
+        modes: {
+          currentModeId: "plan",
+          availableModes: advertised ? [{ id: "agent" }] : [{ id: "plan" }],
+        },
+      });
+      await new Promise((r) => setImmediate(r));
+      if (advertised) {
+        assert.deepEqual(f.calls[3].params, {
+          sessionId: "exact",
+          modeId: "agent",
+        });
+        assert.equal(f.calls[3].method, "session/set_mode");
+        f.response(f.calls[3].id, {});
+      } else assert.equal(f.calls.length, 3);
+      assert.equal(await initialized, "exact");
+    }
+  }
 });

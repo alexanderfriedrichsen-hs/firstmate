@@ -1,3 +1,10 @@
+import {
+  normalizeQuestions,
+  validateQuestionAnswers,
+  fullAccessCursorArgs,
+  type Question,
+  type Answers,
+} from "./questions.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { subscriptionEnv } from "./provider-auth.ts";
 import { randomUUID } from "node:crypto";
@@ -18,6 +25,10 @@ export class CursorACP {
     string,
     { id: number | string; options: any[] }
   >();
+  private questions = new Map<
+    string,
+    { id: number | string; method: string; questions: Question[] }
+  >();
   private loading = false;
   private cancelGeneration = 0;
   sessionId?: string;
@@ -27,10 +38,11 @@ export class CursorACP {
     cwd: string,
     private emit: (type: string, payload: any) => void,
     child?: ChildProcessWithoutNullStreams,
+    private fullAccess = true,
   ) {
     this.child =
       child ??
-      spawn(executable, ["acp"], {
+      spawn(executable, fullAccess ? fullAccessCursorArgs : ["acp"], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: subscriptionEnv(),
@@ -68,29 +80,54 @@ export class CursorACP {
     }
     this.pending.clear();
     this.approvals.clear();
+    this.questions.clear();
     this.emit("provider.exit", { message });
   }
   private write(value: any) {
     this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
   }
   private receive(message: any) {
-    if (message.method === "cursor/ask_question" && message.id !== undefined) {
-      this.write({
-        id: message.id,
-        result: { outcome: { outcome: "cancelled" } },
-      });
-      return;
-    }
-    if (message.method === "cursor/create_plan" && message.id !== undefined) {
-      this.write({
-        id: message.id,
-        result: {
-          outcome: {
-            outcome: "rejected",
-            reason: "Plan approval is unavailable; ask the user in chat.",
-          },
-        },
-      });
+    if (
+      ["cursor/ask_question", "cursor/create_plan"].includes(message.method) &&
+      message.id !== undefined
+    ) {
+      const id = randomUUID();
+      try {
+        const params =
+          message.method === "cursor/create_plan"
+            ? {
+                title: message.params?.name ?? "Plan",
+                questions: [
+                  {
+                    id: "plan",
+                    prompt: message.params?.plan,
+                    options: [
+                      { id: "approve", label: "Approve plan" },
+                      { id: "revise", label: "Revise plan" },
+                    ],
+                  },
+                ],
+              }
+            : message.params;
+        const questions = normalizeQuestions("cursor", params);
+        this.questions.set(id, {
+          id: message.id,
+          method: message.method,
+          questions,
+        });
+        this.emit("permission.request", {
+          id,
+          kind: "question",
+          method: message.method,
+          questions,
+          params: message.params,
+        });
+      } catch {
+        this.write({
+          id: message.id,
+          error: { code: -32602, message: "Unsupported question format" },
+        });
+      }
       return;
     }
     if (
@@ -101,6 +138,28 @@ export class CursorACP {
         this.write({
           id: message.id,
           result: { outcome: { outcome: "cancelled" } },
+        });
+        return;
+      }
+      if (this.fullAccess) {
+        const option =
+          (message.params.options ?? []).find(
+            (o: any) => o.kind === "allow_always",
+          ) ??
+          (message.params.options ?? []).find(
+            (o: any) => o.kind === "allow_once",
+          );
+        this.write({
+          id: message.id,
+          result: {
+            outcome: option
+              ? { outcome: "selected", optionId: option.optionId }
+              : { outcome: "cancelled" },
+          },
+        });
+        this.emit("permission.autoApproved", {
+          method: message.method,
+          granted: !!option,
         });
         return;
       }
@@ -170,7 +229,7 @@ export class CursorACP {
         if (!hello.agentCapabilities?.loadSession)
           throw new Error("Cursor does not support resuming this session");
         this.sessionId = resume;
-        await this.request("session/load", {
+        this.sessionMetadata = await this.request("session/load", {
           sessionId: resume,
           cwd,
           mcpServers: [],
@@ -185,6 +244,15 @@ export class CursorACP {
           throw new Error("Cursor returned no session identity");
         this.sessionId = session.sessionId;
       }
+      const modes = this.sessionMetadata?.modes;
+      const agentMode = modes?.availableModes?.find(
+        (mode: any) => mode.id === "agent",
+      );
+      if (this.fullAccess && agentMode && modes.currentModeId !== agentMode.id)
+        await this.request("session/set_mode", {
+          sessionId: this.sessionId,
+          modeId: agentMode.id,
+        });
     } finally {
       this.loading = false;
     }
@@ -203,6 +271,30 @@ export class CursorACP {
       { sessionId: this.sessionId, prompt: [{ type: "text", text }] },
       0,
     );
+  }
+  answer(id: string, answers: Answers) {
+    const request = this.questions.get(id);
+    if (!request) throw Error("Question is no longer pending");
+    const valid = validateQuestionAnswers(request.questions, answers);
+    const outcome =
+      request.method === "cursor/create_plan"
+        ? {
+            outcome:
+              valid.plan.answers[0] === "Approve plan"
+                ? "accepted"
+                : "rejected",
+          }
+        : {
+            outcome: "answered",
+            answers: request.questions.map((q) => ({
+              questionId: q.id,
+              selectedOptionIds: valid[q.id].answers.map(
+                (label) => q.options!.find((o) => o.label === label)!.nativeId,
+              ),
+            })),
+          };
+    this.write({ id: request.id, result: { outcome } });
+    this.questions.delete(id);
   }
   permission(id: string, decision: string) {
     const request = this.approvals.get(id);
@@ -224,6 +316,13 @@ export class CursorACP {
   }
   cancel() {
     this.cancelGeneration++;
+    for (const request of this.questions.values())
+      this.write({
+        id: request.id,
+        result: { outcome: { outcome: "cancelled" } },
+      });
+    this.questions.clear();
+    this.emit("permission.expired", {});
     for (const request of this.approvals.values())
       this.write({
         id: request.id,

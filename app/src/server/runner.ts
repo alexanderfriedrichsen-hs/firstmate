@@ -1,3 +1,14 @@
+import {
+  normalizeQuestions,
+  claudeToolHandler,
+  validateQuestionAnswers,
+  claudeQuestionInput,
+  codexApproval,
+  fullAccessThread,
+  fullAccessTurn,
+  fullAccessClaude,
+  type Question,
+} from "./questions.ts";
 import fs from "node:fs";
 import { subscriptionEnv } from "./provider-auth.ts";
 import { CursorACP } from "./cursor-acp.ts";
@@ -23,7 +34,13 @@ let claudeInterrupted = false;
 const commands = new Map<string, any>();
 const permissions = new Map<
   string,
-  { id: any; method: string; input?: any; resolve?: (answer: any) => void }
+  {
+    id: any;
+    method: string;
+    input?: any;
+    questions?: Question[];
+    resolve?: (answer: any) => void;
+  }
 >();
 const journal = fs.openSync(path.join(dir, "events.jsonl"), "a", 0o600);
 function emit(type: string, payload: any) {
@@ -113,6 +130,38 @@ if (child) {
       return;
     }
     if (msg.id !== undefined) {
+      const approval = codexApproval(msg.method, msg.params);
+      if (approval !== undefined) {
+        child!.stdin.write(
+          JSON.stringify({ id: msg.id, result: approval }) + "\n",
+        );
+        emit("permission.autoApproved", { method: msg.method });
+        return;
+      }
+      if (msg.method === "item/tool/requestUserInput") {
+        try {
+          const id = randomUUID();
+          const questions = normalizeQuestions("codex", msg.params);
+          permissions.set(id, { id: msg.id, method: msg.method, questions });
+          emit("permission.request", {
+            id,
+            kind: "question",
+            method: msg.method,
+            questions,
+            incarnation: config.incarnation,
+          });
+          state = "waiting_permission";
+          identity();
+        } catch {
+          child!.stdin.write(
+            JSON.stringify({
+              id: msg.id,
+              error: { code: -32602, message: "Unsupported question format" },
+            }) + "\n",
+          );
+        }
+        return;
+      }
       const id = randomUUID();
       permissions.set(id, { id: msg.id, method: msg.method });
       emit("permission.request", {
@@ -127,6 +176,19 @@ if (child) {
       identity();
       return;
     }
+    if (msg.method === "serverRequest/resolved") {
+      let resolved = false;
+      for (const [id, request] of permissions)
+        if (request.id === msg.params?.requestId) {
+          permissions.delete(id);
+          emit("permission.resolved", { id });
+          resolved = true;
+        }
+      if (resolved && state === "waiting_permission") {
+        state = permissions.size ? "waiting_permission" : "running";
+        identity();
+      }
+    }
     if (msg.method === "item/started" && msg.params?.item?.id)
       activeItems.set(msg.params.item.id, msg.params.item);
     if (msg.method === "item/completed" && msg.params?.item?.id)
@@ -139,6 +201,7 @@ if (child) {
     }
     if (msg.method === "turn/completed") {
       permissions.clear();
+      emit("permission.expired", {});
       state = "idle";
       turnId = undefined;
       identity();
@@ -159,10 +222,16 @@ async function init() {
   if (config.provider === "cursor") {
     cursor = new CursorACP(config.executable, config.cwd, (type, payload) => {
       if (type === "permission.request") {
-        permissions.set(payload.id, { id: payload.id, method: "cursor/tool" });
+        permissions.set(payload.id, {
+          id: payload.id,
+          method:
+            payload.kind === "question" ? "cursor/question" : "cursor/tool",
+          questions: payload.questions,
+        });
         state = "waiting_permission";
       }
       if (type === "provider.exit") state = "lost";
+      if (type === "permission.expired") permissions.clear();
       emit(
         type,
         type === "permission.request"
@@ -183,8 +252,7 @@ async function init() {
     const params: ThreadStartParams = {
       cwd: config.cwd,
       model: config.model,
-      approvalPolicy: "untrusted",
-      sandbox: config.stage === "review" ? "read-only" : "workspace-write",
+      ...fullAccessThread,
       developerInstructions: config.instructions,
     };
     const result = await rpc(
@@ -220,7 +288,7 @@ async function claudeTurn(
         resume: threadId,
         pathToClaudeCodeExecutable: config.executable,
         settingSources: ["user", "project", "local"],
-        permissionMode: "default",
+        ...fullAccessClaude,
         includePartialMessages: true,
         maxTurns: config.maxTurns ?? 8,
         systemPrompt: {
@@ -231,11 +299,14 @@ async function claudeTurn(
         env: {
           ...subscriptionEnv(),
         },
-        canUseTool: async (tool, input, options) => {
+        canUseTool: claudeToolHandler(async (tool, input, options) => {
+          const questions = normalizeQuestions("claude", input);
           const id = randomUUID();
           emit("permission.request", {
             id,
-            method: "claude/tool",
+            kind: "question",
+            questions,
+            method: "claude/question",
             params: { tool, input, toolUseID: options.toolUseID },
             incarnation: config.incarnation,
           });
@@ -251,7 +322,8 @@ async function claudeTurn(
             options.signal.addEventListener("abort", abort, { once: true });
             permissions.set(id, {
               id,
-              method: "claude/tool",
+              method: "claude/question",
+              questions,
               input,
               resolve: (answer) => {
                 options.signal.removeEventListener("abort", abort);
@@ -259,7 +331,7 @@ async function claudeTurn(
               },
             });
           });
-        },
+        }),
       },
     });
     for await (const msg of claude) {
@@ -333,16 +405,7 @@ async function handle(req: any) {
         model: req.model ?? config.model,
         effort: req.effort ?? config.effort,
         outputSchema: config.outputSchema,
-        sandboxPolicy:
-          config.stage === "review"
-            ? { type: "readOnly", networkAccess: true }
-            : {
-                type: "workspaceWrite",
-                writableRoots: [config.cwd],
-                networkAccess: true,
-                excludeTmpdirEnvVar: false,
-                excludeSlashTmp: false,
-              },
+        ...fullAccessTurn,
       };
       result = await rpc(
         req.type === "steer" ? "turn/steer" : "turn/start",
@@ -437,7 +500,24 @@ async function handle(req: any) {
   } else if (req.type === "permission") {
     const perm = permissions.get(req.requestId);
     if (!perm) throw new Error("Permission is no longer pending");
-    if (perm.method === "cursor/tool") {
+    if (perm.questions) {
+      const answers = validateQuestionAnswers(perm.questions, req.answers);
+      if (perm.method === "cursor/question")
+        cursor!.answer(req.requestId, answers);
+      else if (perm.method === "claude/question")
+        perm.resolve!({
+          behavior: "allow",
+          updatedInput: claudeQuestionInput(
+            perm.input,
+            perm.questions,
+            answers,
+          ),
+        });
+      else
+        child!.stdin.write(
+          JSON.stringify({ id: perm.id, result: { answers } }) + "\n",
+        );
+    } else if (perm.method === "cursor/tool") {
       cursor!.permission(req.requestId, req.decision);
     } else if (perm.resolve) {
       perm.resolve(

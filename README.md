@@ -169,7 +169,7 @@ Review the report, then run `lease-retire --approve-report <id>` from the same h
 Retirement checks the exact lease, clean checkout, settled sessions, and preserved evidence, then returns the lease without force.
 
 Codex streaming, permission replies, takeover, exact resume, native worker dispatch, and independent revision-bound review have isolated integration coverage.
-Claude worker startup, exact-session resume, streaming, permission presentation, and interruption have isolated coverage.
+Claude worker startup, exact-session resume, streaming, question responses, and interruption have isolated coverage.
 To sign in to Claude or Cursor, open **Settings > Providers** and select **Sign in**.
 The native provider CLI opens your default browser, and the app refreshes connection status after you finish authentication.
 Credentials stay in the provider's native credential store; the app does not collect passwords or store authentication links in browser storage.
@@ -181,7 +181,10 @@ Use **Model** to change the model and supported effort for the next turn with th
 Cursor uses its native Agent Client Protocol (ACP) connection and your signed-in subscription.
 Reported session usage appears in the app when the provider supplies it; missing usage is not treated as zero.
 The app does not enforce an account-wide token cap or change subscription billing settings.
-Native permission requests appear in the conversation for a one-time approval or denial.
+As configured for this app, Codex, Claude, and Cursor run with full tool access, including review conversations.
+The app uses native full-access settings and automatically grants supported tool permission requests; provider and operating system limits still apply.
+Actual questions and plan decisions appear in the conversation and wait for your answer.
+To apply this policy to a retained runner from an older release, interrupt and park it, then resume the same chat.
 Protocol fixtures cover permissions and session transport; they do not establish full native provider verification.
 
 To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.

@@ -1,3 +1,4 @@
+import { validateQuestionAnswers } from "./questions.ts";
 import Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
 import path from "node:path";
@@ -159,7 +160,7 @@ export class Store {
       : {};
     if ((config.runnerProtocol ?? 0) < minimum)
       throw new Conflict(
-        "Park and resume the exact session to load model, effort, and skill controls in this older runner.",
+        "Park and resume the exact session to load current full-access, question, model, effort, and skill controls in this older runner.",
       );
   }
   setting(key: string, value?: unknown): any {
@@ -725,6 +726,7 @@ export class Store {
         c.type === "conversation.send" ||
         c.type === "conversation.steer"
       ) {
+        this.requireCurrentRunner(conv, 5);
         if (
           conv.ticketId &&
           conv.stage !== "review" &&
@@ -818,9 +820,18 @@ export class Store {
         const data = json(req.data);
         if (data.incarnation !== conv.incarnation)
           throw new Conflict("Permission incarnation changed");
+        let response: any;
+        if (data.kind === "question") {
+          response = {
+            answers: validateQuestionAnswers(data.questions, p.answers),
+          };
+        } else
+          response = {
+            decision: z.enum(["accept", "decline"]).parse(p.decision),
+          };
         this.outbox(c, c.type, conv.id, {
           requestId: req.id,
-          decision: z.enum(["accept", "decline"]).parse(p.decision),
+          ...response,
           provenance: data,
         });
         this.db

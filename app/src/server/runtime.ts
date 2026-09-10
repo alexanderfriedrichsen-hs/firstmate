@@ -636,7 +636,7 @@ export class Runtime {
     atomic(
       path.join(dir, "config.json"),
       JSON.stringify({
-        runnerProtocol: 4,
+        runnerProtocol: 5,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
@@ -796,6 +796,20 @@ export class Runtime {
           "UPDATE permissions SET state='expired' WHERE conversation_id=? AND state IN ('pending','answering')",
         )
         .run(c.id);
+    if (e.type === "permission.resolved") {
+      this.store.db
+        .prepare(
+          "UPDATE permissions SET state='expired' WHERE id=? AND conversation_id=? AND state IN ('pending','answering')",
+        )
+        .run(p.id, c.id);
+      c.state = this.store.db
+        .prepare(
+          "SELECT 1 FROM permissions WHERE conversation_id=? AND state IN ('pending','answering')",
+        )
+        .get(c.id)
+        ? "waiting_permission"
+        : "running";
+    }
     if (e.type === "permission.request") {
       this.store.db
         .prepare("INSERT OR IGNORE INTO permissions VALUES(?,?,?,?)")
