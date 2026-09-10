@@ -207,7 +207,7 @@ test("question replies validate atomically and stale runners retain interruption
     fs.mkdirSync(path.join(home, "app/runners/old"), { recursive: true });
     fs.writeFileSync(
       path.join(home, "app/runners/old/config.json"),
-      JSON.stringify({ runnerProtocol: 4 }),
+      JSON.stringify({ runnerProtocol: 5 }),
     );
     assert.throws(
       () => command("conversation.send", { text: "hello" }, current),

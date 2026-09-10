@@ -157,6 +157,7 @@ test("expired reply cleanup preserves other conversations incarnations and effec
       ["other-conversation", "other", 1, "permission.reply"],
       ["old-incarnation", cid, 2, "permission.reply"],
       ["other-effect", cid, 1, "conversation.send"],
+      ["mismatch-provenance", cid, 1, "permission.reply"],
     ] as const) {
       store.db
         .prepare("INSERT INTO permissions VALUES(?,?,?,?)")
@@ -170,7 +171,12 @@ test("expired reply cleanup preserves other conversations incarnations and effec
           commandId,
           kind,
           conversation,
-          JSON.stringify({ requestId: id }),
+          JSON.stringify({
+            requestId: id,
+            ...(id === "mismatch-provenance"
+              ? { provenance: { incarnation: 9 } }
+              : {}),
+          }),
           "uncertain",
           new Date().toISOString(),
         );
@@ -192,7 +198,7 @@ test("expired reply cleanup preserves other conversations incarnations and effec
           .prepare("SELECT count(*) n FROM outbox WHERE state='uncertain'")
           .get() as any
       ).n,
-      3,
+      4,
     );
     assert.equal(
       (

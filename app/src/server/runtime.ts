@@ -418,6 +418,14 @@ export class Runtime {
       )
       .all(c.id) as any[]) {
       if (JSON.parse(row.data).incarnation !== c.incarnation) continue;
+      const provenance = JSON.parse(row.payload).provenance;
+      if (
+        provenance &&
+        (provenance.incarnation !== c.incarnation ||
+          (provenance.id &&
+            provenance.id !== JSON.parse(row.payload).requestId))
+      )
+        continue;
       this.store.db
         .prepare(
           "UPDATE outbox SET state='cancelled' WHERE id=? AND state IN ('pending','uncertain')",
