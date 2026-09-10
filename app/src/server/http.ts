@@ -350,6 +350,8 @@ export function serve(
           return send(404, { error: "Message not found" });
         return send(200, {
           conversation: c,
+          nativeCommands:
+            store.setting("native-commands:" + c.id)?.commands ?? [],
           messages: u.searchParams.get("search")
             ? store.db
                 .prepare(

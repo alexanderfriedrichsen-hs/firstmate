@@ -1,3 +1,4 @@
+import { nativeCommands } from "./native-commands.ts";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -780,6 +781,38 @@ export class Runtime {
   apply(c: Conversation, e: any) {
     const prior = JSON.stringify([c.state, c.providerId, c.model]);
     const p = e.payload;
+    const commandsKey = "native-commands:" + c.id;
+    if (
+      c.provider === "claude" &&
+      e.type === "claude.event" &&
+      p.type === "system"
+    ) {
+      if (p.subtype === "init") {
+        const terminal = Array.isArray(p.terminal_slash_commands)
+          ? p.terminal_slash_commands.filter(
+              (v: unknown) => typeof v === "string",
+            )
+          : [];
+        this.store.setting(commandsKey, {
+          terminal,
+          commands: nativeCommands(p.slash_commands, terminal),
+        });
+      } else if (p.subtype === "commands_changed") {
+        const terminal = this.store.setting(commandsKey)?.terminal ?? [];
+        this.store.setting(commandsKey, {
+          terminal,
+          commands: nativeCommands(p.commands, terminal),
+        });
+      }
+    }
+    if (
+      c.provider === "cursor" &&
+      e.type === "cursor.update" &&
+      p.sessionUpdate === "available_commands_update"
+    )
+      this.store.setting(commandsKey, {
+        commands: nativeCommands(p.availableCommands),
+      });
     if (e.type === "conversation.bound") {
       c.providerId = p.providerId;
       if (p.model) c.model = p.model;

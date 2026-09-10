@@ -253,6 +253,18 @@ test("Cursor new and resumed full-access sessions select only an advertised agen
       f.response(f.calls[1].id, {});
       await new Promise((r) => setImmediate(r));
       assert.equal(f.calls[2].method, resume ? "session/load" : "session/new");
+      f.child.stdout.write(
+        JSON.stringify({
+          method: "session/update",
+          params: {
+            sessionId: "exact",
+            update: {
+              sessionUpdate: "available_commands_update",
+              availableCommands: [{ name: "review", description: "Review" }],
+            },
+          },
+        }) + "\n",
+      );
       f.response(f.calls[2].id, {
         sessionId: "exact",
         modes: {
@@ -270,6 +282,11 @@ test("Cursor new and resumed full-access sessions select only an advertised agen
         f.response(f.calls[3].id, {});
       } else assert.equal(f.calls.length, 3);
       assert.equal(await initialized, "exact");
+      assert.equal(
+        f.events.find((e) => e.type === "cursor.update").payload
+          .availableCommands[0].name,
+        "review",
+      );
     }
   }
 });

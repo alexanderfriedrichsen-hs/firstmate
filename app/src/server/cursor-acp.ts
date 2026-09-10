@@ -33,6 +33,7 @@ export class CursorACP {
   private cancelGeneration = 0;
   sessionId?: string;
   sessionMetadata: any;
+  private loadingCommands: any;
   constructor(
     executable: string,
     cwd: string,
@@ -176,6 +177,13 @@ export class CursorACP {
       return;
     }
     if (message.method === "session/update") {
+      if (
+        this.loading &&
+        message.params?.update?.sessionUpdate === "available_commands_update"
+      ) {
+        this.loadingCommands = message.params;
+        return;
+      }
       if (!this.loading && message.params?.sessionId === this.sessionId)
         this.emit("cursor.update", message.params.update);
       return;
@@ -224,6 +232,7 @@ export class CursorACP {
       throw new Error("Unsupported Cursor ACP protocol");
     await this.request("authenticate", { methodId: "cursor_login" });
     this.loading = true;
+    this.loadingCommands = undefined;
     try {
       if (resume) {
         if (!hello.agentCapabilities?.loadSession)
@@ -253,7 +262,10 @@ export class CursorACP {
           sessionId: this.sessionId,
           modeId: agentMode.id,
         });
+      if (this.loadingCommands?.sessionId === this.sessionId)
+        this.emit("cursor.update", this.loadingCommands.update);
     } finally {
+      this.loadingCommands = undefined;
       this.loading = false;
     }
     return this.sessionId;
