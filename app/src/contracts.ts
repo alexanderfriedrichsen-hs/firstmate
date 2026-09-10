@@ -82,21 +82,32 @@ export const capabilities = {
     usage: "verified_in_isolated_fixture",
   },
   claude: {
-    rollout: "gated_pending_permission_approval_and_accounting",
+    rollout: "available_with_native_subscription_auth",
+    verification:
+      "Native authentication and model metadata checked; paid-turn smoke not performed in this rollout.",
     version: "2.1.265",
     stream: "verified_in_isolated_fixture",
     history: "unsupported",
     resume: "verified_in_isolated_fixture",
     steer: "unsupported",
-    interrupt: "unverified",
-    permissionReply: "unverified",
+    interrupt: "verified_in_isolated_fixture",
+    permissionReply: "implemented_native_sdk_callback_not_live_smoke_tested",
     interactiveTakeover: "unverified",
     usage: "verified_in_isolated_fixture",
   },
   cursor: {
-    status: "unavailable",
+    status: "available_with_native_subscription_auth",
+    version: "2026.09.08-6caf4ff",
+    stream: "verified_in_native_subscription_smoke",
+    newSession: "verified_in_native_subscription_smoke",
+    model: "verified_in_native_subscription_smoke",
+    resume: "verified_in_isolated_fixture",
+    permissionReply: "verified_in_isolated_fixture",
+    interrupt: "verified_in_isolated_fixture",
+    usage: "unavailable_in_native_smoke",
+    hardCapEnforced: false,
     reason:
-      "Whole-run input and output token bound and account allowance are unverified. Hard cap: 5,000 tokens per calendar month, America/Los_Angeles, no rollover.",
+      "Subscription usage reporting requires an explicit provider setting. Native smoke verified session creation, model selection, and streamed output. Resume, interruption, and permissions have fixture coverage. Token usage and account allowance are unavailable when Cursor does not report them; strict token caps are not enforced.",
   },
 };
 export const now = () => new Date().toISOString();
