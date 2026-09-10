@@ -11,10 +11,14 @@ export function ProviderSettings({
   api,
   post,
   cursorReason,
+  cursor,
+  enableCursor,
 }: {
   api: (url: string) => Promise<any>;
   post: (url: string) => Promise<any>;
   cursorReason: string;
+  cursor: any;
+  enableCursor: () => Promise<any>;
 }) {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [error, setError] = useState("");
@@ -99,6 +103,29 @@ export function ProviderSettings({
           )}
         </article>
       ))}
+      {!(cursor?.enabled && cursor?.mode === "subscription_usage") && (
+        <div className="notice">
+          <p>
+            To use Cursor, enable subscription usage reporting. This uses your
+            signed-in account without an app-enforced token cap.
+          </p>
+          <button
+            disabled={busy === "subscription"}
+            onClick={async () => {
+              setBusy("subscription");
+              try {
+                await enableCursor();
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setBusy("");
+              }
+            }}
+          >
+            Use subscription usage reporting
+          </button>
+        </div>
+      )}
       <button onClick={() => void refresh().catch((e) => setError(String(e)))}>
         Refresh sign-in status
       </button>

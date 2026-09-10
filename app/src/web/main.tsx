@@ -416,7 +416,10 @@ function App() {
             )}
           </>
         ) : view === "dashboards" ? (
-          <Dashboard version={snapshot.sequence} />
+          <Dashboard
+            version={snapshot.sequence}
+            cursor={snapshot.policy.cursor}
+          />
         ) : view === "skills" ? (
           <SkillsBrowser
             conversations={conversations}
@@ -699,6 +702,8 @@ function App() {
           <ProviderSettings
             api={api}
             cursorReason={snapshot.capabilities.cursor.reason}
+            cursor={snapshot.policy.cursor}
+            enableCursor={() => act("provider.cursor.subscription")}
             post={(url) =>
               api(url, {
                 method: "POST",
@@ -1703,7 +1708,7 @@ function TicketDetail({
     </div>
   );
 }
-function Dashboard({ version }: { version: number }) {
+function Dashboard({ version, cursor }: { version: number; cursor: any }) {
   const [data, setData] = useState<any>();
   const [period, setPeriod] = useState("30");
   useEffect(() => {
@@ -1721,11 +1726,15 @@ function Dashboard({ version }: { version: number }) {
       input: 0,
       output: 0,
       unknown: false,
+      inputMeasured: 0,
+      outputMeasured: 0,
       runs: new Set(),
     };
     r.input += u.input ?? 0;
     r.output += u.output ?? 0;
-    r.unknown ||= u.input === null || u.output === null;
+    r.unknown ||= u.input == null || u.output == null;
+    r.inputMeasured += Number(u.input != null);
+    r.outputMeasured += Number(u.output != null);
     r.runs.add(u.conversation_id);
     rows.set(key, r);
   }
@@ -1752,7 +1761,12 @@ function Dashboard({ version }: { version: number }) {
       <div className="metrics">
         <div>
           <small>Observed tokens</small>
-          <strong>{total.toLocaleString()}</strong>
+          <strong>
+            {all.some((r) => r.inputMeasured || r.outputMeasured)
+              ? total.toLocaleString()
+              : "Unavailable"}
+          </strong>
+          {all.some((r) => r.unknown) && <small>Partial coverage</small>}
         </div>
         <div>
           <small>Models</small>
@@ -1783,9 +1797,19 @@ function Dashboard({ version }: { version: number }) {
                     {r.role === "supervisor" ? "Firstmate" : r.role}
                   </small>
                 </td>
-                <td>{r.input.toLocaleString()}</td>
-                <td>{r.output.toLocaleString()}</td>
-                <td>{r.unknown ? "Partial" : "Measured"}</td>
+                <td>
+                  {r.inputMeasured ? r.input.toLocaleString() : "Unavailable"}
+                </td>
+                <td>
+                  {r.outputMeasured ? r.output.toLocaleString() : "Unavailable"}
+                </td>
+                <td>
+                  {!r.inputMeasured && !r.outputMeasured
+                    ? "Unavailable"
+                    : r.unknown
+                      ? "Partial"
+                      : "Measured"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1804,14 +1828,17 @@ function Dashboard({ version }: { version: number }) {
         subscription spend, and unrelated provider activity are separate.
       </div>
       <AccountDashboard api={api} />
-      <h3>Cursor budget</h3>
+      <h3>Cursor subscription</h3>
       <p>
-        5,000 input + output tokens per calendar month · America/Los_Angeles ·
-        No rollover
+        {cursor?.enabled && cursor?.mode === "subscription_usage"
+          ? "Subscription usage reporting is enabled."
+          : "Enable subscription usage reporting in Settings > Providers to use Cursor."}
       </p>
-      <span className="badge">
-        Unavailable until whole-run hard-cap enforcement is verified
-      </span>
+      <p className="help">
+        Uses your signed-in Cursor account. Reported session tokens appear above
+        when available. No account-wide token cap is enforced, and billing
+        settings remain in Cursor.
+      </p>
     </div>
   );
 }

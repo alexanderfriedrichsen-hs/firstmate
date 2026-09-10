@@ -327,6 +327,19 @@ test(
         0,
       );
 
+      await page
+        .getByRole("button", {
+          name: "Use subscription usage reporting",
+          exact: true,
+        })
+        .click();
+      await page
+        .getByRole("button", {
+          name: "Use subscription usage reporting",
+          exact: true,
+        })
+        .waitFor({ state: "hidden" });
+      assert.equal(store.setting("policy").cursor.mode, "subscription_usage");
       await page.getByLabel("Appearance").selectOption("dark");
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
@@ -344,6 +357,48 @@ test(
           .count(),
         0,
       );
+      await page.route("**/v1/usage", (route) =>
+        route.fulfill({
+          json: {
+            observations: [
+              {
+                model: "unknown-usage-fixture",
+                input: null,
+                output: null,
+                observed_at: new Date().toISOString(),
+                conversation_id: cid,
+                data: { provider: "cursor", role: "supervisor" },
+              },
+            ],
+          },
+        }),
+      );
+      await page.route("**/v1/catalog?topic=account*", (route) =>
+        route.fulfill({ json: {} }),
+      );
+      await page
+        .getByRole("button", { name: "Dashboards", exact: true })
+        .click();
+      await page
+        .getByRole("heading", { name: "Usage by model", exact: true })
+        .waitFor();
+      const usageRow = page
+        .getByRole("row")
+        .filter({ hasText: "unknown-usage-fixture" });
+      await usageRow.waitFor();
+      assert.equal(
+        await usageRow
+          .getByRole("cell", { name: "Unavailable", exact: true })
+          .count(),
+        3,
+      );
+      assert.equal(
+        await page.getByText("Cursor budget", { exact: true }).count(),
+        0,
+      );
+      await page
+        .getByText("Subscription usage reporting is enabled.", { exact: true })
+        .waitFor();
       await page
         .getByRole("button", { name: "Artifacts", exact: true })
         .click();
@@ -405,21 +460,19 @@ test(
         ["decline", [{ kind: "allow_always", optionId: "always" }]],
       ] as const) {
         const permissionId = randomUUID();
-        store.db
-          .prepare("INSERT INTO permissions VALUES(?,?,?,?)")
-          .run(
-            permissionId,
-            cid,
-            "pending",
-            JSON.stringify({
-              method: "cursor/tool",
-              incarnation: 0,
-              params: {
-                toolCall: { title: "Cursor permission fixture" },
-                options,
-              },
-            }),
-          );
+        store.db.prepare("INSERT INTO permissions VALUES(?,?,?,?)").run(
+          permissionId,
+          cid,
+          "pending",
+          JSON.stringify({
+            method: "cursor/tool",
+            incarnation: 0,
+            params: {
+              toolCall: { title: "Cursor permission fixture" },
+              options,
+            },
+          }),
+        );
         await page.reload();
         await page.getByText("Permission requested", { exact: true }).waitFor();
         assert.equal(
