@@ -61,6 +61,8 @@ The localhost app is under development.
 It uses native Codex App Server conversations, subscription-authenticated Claude and Cursor sessions, SQLite write-ahead logging, and separate Treehouse leases for workers, checks, and reviews.
 The browser is a client of the durable runtime.
 Closing it does not cancel accepted work.
+The chat follows new output automatically until you scroll up to read earlier messages.
+Scroll back to the bottom or select **Jump to latest** to resume following.
 
 To try the app, use Node.js 24.16 or later, an authenticated Codex CLI, Treehouse, and a non-live source clone.
 The app currently requires a POSIX environment with Unix sockets, `ps`, and `lsof`; native Windows is not supported.

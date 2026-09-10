@@ -189,7 +189,6 @@ function App() {
       (c) => c.id === selectedConversation && c.ticketId === selected,
     ) ?? conversations.find((c) => c.ticketId === selected);
   const navigate = (next: string) => {
-    engagePanel("navigation");
     location.hash = next;
     setView(next);
     setMobile(false);
@@ -232,11 +231,7 @@ function App() {
       >
         ☰
       </button>
-      <aside
-        {...sidebarWidth}
-        className={"sidebar " + (mobile ? "open" : "")}
-        onPointerDown={() => engagePanel("tickets")}
-      >
+      <aside {...sidebarWidth} className={"sidebar " + (mobile ? "open" : "")}>
         <div className="brand">
           <span className="mark">/</span> firstmate{" "}
           <span className="local">LOCAL</span>
@@ -370,11 +365,7 @@ function App() {
           </span>
         </footer>
       </aside>
-      <main
-        onPointerDown={() =>
-          engagePanel(view === "work" ? (supervisor?.id ?? "supervisor") : view)
-        }
-      >
+      <main>
         {error && (
           <div role="alert" className="error">
             {error}
@@ -488,11 +479,7 @@ function App() {
         )}
       </main>
       {view === "work" && ticket && (
-        <aside
-          {...contextWidth}
-          className="context"
-          onPointerDownCapture={() => engagePanel("context")}
-        >
+        <aside {...contextWidth} className="context">
           <header>
             <div className="tabs">
               <button
@@ -1437,7 +1424,7 @@ function Chat({
             </div>
           ),
         )}
-      <div className="composer" onPointerDown={() => engagePanel(c.id)}>
+      <div className="composer">
         {attachments.map((a) => (
           <button
             key={a.id}

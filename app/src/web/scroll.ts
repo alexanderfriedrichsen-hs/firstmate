@@ -1,42 +1,29 @@
 import { useLayoutEffect, useRef, useState } from "react";
 type Anchor = { id: string; offset: number };
-let engaged: string | undefined;
-let keyboardFocusAt = 0;
-document.addEventListener(
-  "keydown",
-  (e) => {
-    if (e.key === "Tab" && e.isTrusted) keyboardFocusAt = performance.now();
-  },
-  true,
-);
-const listeners = new Set<() => void>();
-const captures = new Set<string>();
-const change = (id: string) => {
-  if (engaged !== id) {
-    engaged = id;
-    for (const listener of listeners) listener();
-  }
-};
+const readers = new Map<string, () => void>();
+// Explicit history links pause their own transcript, never another chat.
 export function engagePanel(id: string) {
-  change(id);
+  readers.get(id)?.();
 }
 export function useReading(id: string, version: unknown) {
   const ref = useRef<HTMLDivElement>(null);
   const [unread, setUnread] = useState(false);
   const initialized = useRef(false);
+  const following = useRef(true);
   const saved = useRef<Anchor | null>(null);
+  const lastTop = useRef(0);
+  const frame = useRef(0);
   const anchor = () => {
     const el = ref.current;
     if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    const nodes = [...el.querySelectorAll<HTMLElement>("[data-message-id]")];
-    const first = nodes.find(
-      (n) => n.getBoundingClientRect().bottom > rect.top,
-    );
+    const top = el.getBoundingClientRect().top;
+    const first = [
+      ...el.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((node) => node.getBoundingClientRect().bottom > top);
     return first
       ? {
           id: first.dataset.messageId!,
-          offset: first.getBoundingClientRect().top - rect.top,
+          offset: first.getBoundingClientRect().top - top,
         }
       : null;
   };
@@ -45,128 +32,115 @@ export function useReading(id: string, version: unknown) {
     if (saved.current)
       sessionStorage.setItem("reading:" + id, JSON.stringify(saved.current));
   };
+  const follow = () => {
+    following.current = true;
+    saved.current = null;
+    sessionStorage.removeItem("reading:" + id);
+    setUnread(false);
+    if (ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+      lastTop.current = ref.current.scrollTop;
+    }
+  };
   const restore = () => {
     const el = ref.current;
     if (!el || !saved.current) return;
     const node = [
       ...el.querySelectorAll<HTMLElement>("[data-message-id]"),
-    ].find((n) => n.dataset.messageId === saved.current!.id);
+    ].find((node) => node.dataset.messageId === saved.current!.id);
     if (node)
       el.scrollTop +=
         node.getBoundingClientRect().top -
         el.getBoundingClientRect().top -
         saved.current.offset;
+    lastTop.current = el.scrollTop;
   };
-  const pinned = () => {
-    const sel = window.getSelection();
-    return !!sel && !sel.isCollapsed && !!ref.current?.contains(sel.anchorNode);
-  };
-  const canFollow = () =>
-    document.visibilityState === "visible" &&
-    document.hasFocus() &&
-    engaged !== id &&
-    !pinned() &&
-    !captures.has(id);
-  const catchUp = () => {
-    requestAnimationFrame(() => {
-      if (canFollow() && ref.current)
-        ref.current.scrollTop = ref.current.scrollHeight;
-    });
+  const update = () => {
+    if (!initialized.current) return;
+    if (following.current) follow();
+    else restore();
   };
   useLayoutEffect(() => {
     initialized.current = false;
-    saved.current = JSON.parse(
-      sessionStorage.getItem("reading:" + id) ?? "null",
-    );
-    if (!engaged) engaged = id;
-    const changed = () => {
-      if (engaged !== id) catchUp();
+    try {
+      saved.current = JSON.parse(
+        sessionStorage.getItem("reading:" + id) ?? "null",
+      );
+    } catch {
+      saved.current = null;
+    }
+    following.current = !saved.current;
+    const pause = () => {
+      following.current = false;
+      save();
     };
-    listeners.add(changed);
-    const visible = () => {
-      if (engaged === id) restore();
-      else catchUp();
-    };
-    const clear = () => {
-      captures.delete(id);
-    };
-    window.addEventListener("focus", visible);
-    document.addEventListener("visibilitychange", visible);
-    window.addEventListener("pointerup", clear);
-    document.addEventListener("selectionchange", changed);
-    const ro = new ResizeObserver(() => {
-      if (engaged === id || pinned()) restore();
-      else catchUp();
+    readers.set(id, pause);
+    const resize = new ResizeObserver(() => {
+      cancelAnimationFrame(frame.current);
+      frame.current = requestAnimationFrame(update);
     });
+    if (ref.current) resize.observe(ref.current);
     if (ref.current?.firstElementChild)
-      ro.observe(ref.current.firstElementChild);
+      resize.observe(ref.current.firstElementChild);
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
     return () => {
-      if (engaged === id) save();
-      listeners.delete(changed);
-      ro.disconnect();
-      window.removeEventListener("focus", visible);
-      document.removeEventListener("visibilitychange", visible);
-      window.removeEventListener("pointerup", clear);
-      document.removeEventListener("selectionchange", changed);
-      captures.delete(id);
+      if (!following.current) save();
+      readers.delete(id);
+      resize.disconnect();
+      cancelAnimationFrame(frame.current);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
     };
   }, [id]);
   useLayoutEffect(() => {
     if (!ref.current || version === undefined) return;
     if (!initialized.current) {
-      if (saved.current) restore();
-      else ref.current.scrollTop = ref.current.scrollHeight;
       initialized.current = true;
+      if (following.current) follow();
+      else restore();
+      lastTop.current = ref.current.scrollTop;
       return;
     }
-    if (engaged === id || pinned()) {
-      setUnread(true);
+    if (following.current) follow();
+    else {
       restore();
-    } else catchUp();
+      setUnread(true);
+    }
   }, [version, id]);
-  const engage = () => {
-    change(id);
-    save();
-  };
   return {
     ref,
     unread,
-    jump: () => {
-      engage();
-      if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-      save();
-      setUnread(false);
-    },
+    jump: follow,
     handlers: {
-      onPointerDown: () => {
-        engage();
-        captures.add(id);
+      onWheel: (event: React.WheelEvent) => {
+        if (event.deltaY < 0 && following.current) {
+          following.current = false;
+          saved.current = null;
+        }
       },
-      onWheel: engage,
-      onTouchStart: engage,
-      onKeyDown: (e: React.KeyboardEvent) => {
+      onKeyDown: (event: React.KeyboardEvent) => {
         if (
-          [
-            "ArrowUp",
-            "ArrowDown",
-            "PageUp",
-            "PageDown",
-            "Home",
-            "End",
-            " ",
-          ].includes(e.key)
-        )
-          engage();
-      },
-      onFocus: (e: React.FocusEvent) => {
-        if (
-          e.nativeEvent.isTrusted &&
-          performance.now() - keyboardFocusAt < 500
-        )
-          engage();
+          following.current &&
+          ["ArrowUp", "PageUp", "Home"].includes(event.key)
+        ) {
+          following.current = false;
+          saved.current = null;
+        }
       },
       onScroll: () => {
-        if (engaged === id) save();
+        const el = ref.current;
+        if (!el || !initialized.current) return;
+        const bottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 3;
+        if (bottom) {
+          following.current = true;
+          saved.current = null;
+          sessionStorage.removeItem("reading:" + id);
+          setUnread(false);
+        } else if (el.scrollTop < lastTop.current - 1)
+          following.current = false;
+        lastTop.current = el.scrollTop;
+        if (!following.current) save();
       },
     },
   };

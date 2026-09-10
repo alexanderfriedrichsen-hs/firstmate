@@ -155,11 +155,31 @@ test(
         "Initial history stays bounded",
       );
       const transcript = page.locator(".transcript");
+      const bottomGap = () =>
+        transcript.evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        );
+      const streamId = randomUUID();
+      await page.getByRole("textbox", { name: "Message", exact: true }).click();
+      for (let delta = 1; delta <= 3; delta++) {
+        store.message(
+          cid,
+          streamId,
+          "assistant",
+          "Streaming follow fixture\n".repeat(delta * 30),
+          "message",
+        );
+        await page.waitForTimeout(180);
+        assert.ok(
+          (await bottomGap()) < 3,
+          "Streaming follows bottom after composer interaction",
+        );
+      }
       await transcript.click({ position: { x: 20, y: 80 } });
-      await transcript.evaluate((el) => {
-        el.scrollTop = 300;
-        el.dispatchEvent(new Event("scroll"));
-      });
+      await transcript.hover();
+      await page.mouse.wheel(0, -700);
+      await page.waitForTimeout(150);
+      assert.ok((await bottomGap()) > 600, "User scrolling up pauses follow");
       const before = await transcript.evaluate((el) => {
         const top = el.getBoundingClientRect().top;
         const node = [
@@ -243,12 +263,59 @@ test(
         "message",
       );
       await page.waitForTimeout(1200);
-      const distanceFromBottom = await transcript.evaluate(
-        (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-      );
       assert.ok(
-        distanceFromBottom < 4,
-        "Auto-follow recovers for a conversation left mid pointer-drag before its panel unmounted",
+        await anchored(),
+        "Reading position survives switching conversations",
+      );
+      await page
+        .getByRole("button", {
+          name: "New content · Jump to latest ↓",
+          exact: true,
+        })
+        .click();
+      store.message(
+        cid,
+        randomUUID(),
+        "assistant",
+        "Follow after jump\n".repeat(50),
+        "message",
+      );
+      await page.waitForTimeout(200);
+      assert.ok((await bottomGap()) < 3, "Jump resumes following later deltas");
+      await transcript.evaluate((el) => {
+        el.scrollTop -= 250;
+        el.dispatchEvent(new Event("scroll"));
+      });
+      await transcript.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        el.dispatchEvent(new Event("scroll"));
+      });
+      await page.getByRole("textbox", { name: "Message", exact: true }).click();
+      store.message(
+        cid,
+        randomUUID(),
+        "assistant",
+        "Follow after manual bottom\n".repeat(50),
+        "message",
+      );
+      await page.waitForTimeout(200);
+      assert.ok(
+        (await bottomGap()) < 3,
+        "Returning to bottom resumes following",
+      );
+      await historySelect.selectOption(cid2);
+      await historySelect.selectOption(cid);
+      store.message(
+        cid,
+        randomUUID(),
+        "assistant",
+        "Follow after switching\n".repeat(50),
+        "message",
+      );
+      await page.waitForTimeout(200);
+      assert.ok(
+        (await bottomGap()) < 3,
+        "Following chat stays following after switching",
       );
       await page
         .getByRole("textbox", { name: "Search transcript" })
