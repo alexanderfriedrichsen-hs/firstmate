@@ -22,3 +22,16 @@ app/.test-data/
 treehouse.toml
 app/owner.lock
 app/control-mode
+app/state.sqlite
+app/state.sqlite-wal
+app/state.sqlite-shm
+app/cutover-journal.json
+app/cutover-receipt.json
+app/rollback-receipt.json
+app/objects/
+app/checks/
+app/runners/
+app/drafts/
+app/migration-backups/
+app/migration-aborts/
+app/fence-installs/
