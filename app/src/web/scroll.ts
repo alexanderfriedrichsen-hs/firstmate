@@ -108,6 +108,7 @@ export function useReading(id: string, version: unknown) {
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("pointerup", clear);
       document.removeEventListener("selectionchange", changed);
+      captures.delete(id);
     };
   }, [id]);
   useLayoutEffect(() => {

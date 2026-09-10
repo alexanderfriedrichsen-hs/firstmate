@@ -9,6 +9,7 @@ import { chromium } from "@playwright/test";
 import { Store } from "../src/server/store.ts";
 import { homePath } from "../src/server/home.ts";
 import { serve } from "../src/server/http.ts";
+import type { Conversation } from "../src/contracts.ts";
 
 test(
   "browser preserves reading position, searches old history, and saves panel width",
@@ -202,6 +203,52 @@ test(
       assert.ok(
         await anchored(),
         "Programmatic focus does not change engagement",
+      );
+      const cid2 = randomUUID();
+      const conv2: Conversation = {
+        id: cid2,
+        provider: "codex",
+        model: "fixture",
+        role: "supervisor",
+        cwd: home,
+        incarnation: 0,
+        state: "idle",
+        inputOwner: "automation",
+        version: 1,
+        retiredAt: new Date().toISOString(),
+      };
+      store.putConversation(conv2);
+      store.event("conversation.updated", cid2, conv2);
+      await transcript.evaluate((el) =>
+        el.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+        ),
+      );
+      const historySelect = page.getByLabel("Firstmate chat history");
+      await historySelect.waitFor();
+      await historySelect.selectOption(cid2);
+      await transcript.waitFor();
+      await transcript.evaluate((el) =>
+        el.dispatchEvent(
+          new WheelEvent("wheel", { bubbles: true, cancelable: true }),
+        ),
+      );
+      await historySelect.selectOption(cid);
+      await transcript.waitFor();
+      store.message(
+        cid,
+        randomUUID(),
+        "assistant",
+        "Resumed after mid pointer-drag unmount ".repeat(50),
+        "message",
+      );
+      await page.waitForTimeout(1200);
+      const distanceFromBottom = await transcript.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+      );
+      assert.ok(
+        distanceFromBottom < 4,
+        "Auto-follow recovers for a conversation left mid pointer-drag before its panel unmounted",
       );
       await page
         .getByRole("textbox", { name: "Search transcript" })
