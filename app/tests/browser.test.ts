@@ -229,7 +229,30 @@ test(
       await page
         .getByRole("textbox", { name: "Message", exact: true })
         .fill("Durable browser retry fixture");
-      await page.getByRole("button", { name: "Send ↑", exact: true }).click();
+      const composer = page.getByRole("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      await composer.dispatchEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        isComposing: true,
+      });
+      await page.waitForTimeout(100);
+      assert.equal(drop, true, "IME composition Enter does not send a message");
+      await composer.press("End");
+      await composer.press("Shift+Enter");
+      assert.equal(
+        await composer.inputValue(),
+        "Durable browser retry fixture\n",
+      );
+      await composer.press("Backspace");
+      await composer.press("Enter");
+      assert.equal(
+        await composer.inputValue(),
+        "Durable browser retry fixture",
+        "Enter submits without adding a newline",
+      );
       await page
         .getByRole("button", { name: "Retry saved send ↑", exact: true })
         .waitFor();
@@ -455,6 +478,75 @@ test(
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "hidden" });
       await page.getByRole("button", { name: "Work", exact: true }).click();
+      const questionId = randomUUID();
+      store.db.prepare("INSERT INTO permissions VALUES(?,?,?,?)").run(
+        questionId,
+        cid,
+        "pending",
+        JSON.stringify({
+          kind: "question",
+          method: "fixture/question",
+          incarnation: 0,
+          questions: [
+            {
+              id: "choice",
+              header: "Direction",
+              question: "Which direction?",
+              options: [
+                { label: "North", description: "Go north" },
+                { label: "South" },
+              ],
+              isOther: false,
+            },
+            {
+              id: "note",
+              header: "Details",
+              question: "Any details?",
+              isSecret: true,
+            },
+          ],
+        }),
+      );
+      await page.reload();
+      const questionForm = page.getByRole("form", {
+        name: "Questions from Firstmate",
+      });
+      await questionForm.waitFor();
+      assert.equal(
+        await questionForm
+          .getByRole("button", { name: "Send answers", exact: true })
+          .isDisabled(),
+        true,
+      );
+      assert.equal(
+        await questionForm
+          .getByRole("button", { name: "Allow once", exact: true })
+          .count(),
+        0,
+      );
+      await questionForm.getByRole("radio", { name: "North Go north" }).check();
+      await questionForm
+        .getByLabel("Details answer")
+        .fill("private fixture reply");
+      await questionForm
+        .getByRole("button", { name: "Send answers", exact: true })
+        .click();
+      await questionForm.waitFor({ state: "hidden" });
+      const questionOutbox = store.db
+        .prepare(
+          "SELECT payload FROM outbox WHERE kind='permission.reply' ORDER BY rowid DESC LIMIT 1",
+        )
+        .get() as any;
+      assert.deepEqual(JSON.parse(questionOutbox.payload).answers, {
+        choice: { answers: ["North"] },
+        note: { answers: ["private fixture reply"] },
+      });
+      assert.equal(
+        await page.evaluate(() =>
+          JSON.stringify(localStorage).includes("private fixture reply"),
+        ),
+        false,
+      );
       for (const [decision, options] of [
         ["accept", [{ kind: "allow_once", optionId: "once" }]],
         ["decline", [{ kind: "allow_always", optionId: "always" }]],

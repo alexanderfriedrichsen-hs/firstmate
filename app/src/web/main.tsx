@@ -12,6 +12,7 @@ import {
 } from "./library.tsx";
 import { usePanelWidth } from "./panels.ts";
 import { ProviderSettings } from "./providers.tsx";
+import { UserQuestions } from "./questions.tsx";
 let csrf = "";
 async function api(url: string, options: RequestInit = {}) {
   let res = await fetch("/v1/" + url, options);
@@ -1279,50 +1280,65 @@ function Chat({
       )}
       {data?.permissions
         .filter((p: any) => p.state === "pending")
-        .map((p: any) => (
-          <div className="permission" key={p.id}>
-            <strong>Permission requested</strong>
-            <pre>{JSON.stringify(p.data.item ?? p.data.params, null, 2)}</pre>
-            <button
-              onClick={() =>
+        .map((p: any) =>
+          p.data.kind === "question" ? (
+            <UserQuestions
+              key={p.id}
+              request={p}
+              reply={(answers) =>
                 act(
                   "permission.reply",
-                  { requestId: p.id, decision: "decline" },
+                  { requestId: p.id, answers },
                   c.id,
                   c.version,
                 )
               }
-            >
-              Deny
-            </button>
-            <button
-              disabled={
-                p.data.method === "cursor/tool" &&
-                !(p.data.params?.options ?? []).some(
-                  (option: any) => option.kind === "allow_once",
-                )
-              }
-              title={
-                p.data.method === "cursor/tool" &&
-                !(p.data.params?.options ?? []).some(
-                  (option: any) => option.kind === "allow_once",
-                )
-                  ? "Cursor did not offer a one-time approval. Deny this request to continue safely."
-                  : undefined
-              }
-              onClick={() =>
-                act(
-                  "permission.reply",
-                  { requestId: p.id, decision: "accept" },
-                  c.id,
-                  c.version,
-                )
-              }
-            >
-              Allow once
-            </button>
-          </div>
-        ))}
+            />
+          ) : (
+            <div className="permission" key={p.id}>
+              <strong>Permission requested</strong>
+              <pre>{JSON.stringify(p.data.item ?? p.data.params, null, 2)}</pre>
+              <button
+                onClick={() =>
+                  act(
+                    "permission.reply",
+                    { requestId: p.id, decision: "decline" },
+                    c.id,
+                    c.version,
+                  )
+                }
+              >
+                Deny
+              </button>
+              <button
+                disabled={
+                  p.data.method === "cursor/tool" &&
+                  !(p.data.params?.options ?? []).some(
+                    (option: any) => option.kind === "allow_once",
+                  )
+                }
+                title={
+                  p.data.method === "cursor/tool" &&
+                  !(p.data.params?.options ?? []).some(
+                    (option: any) => option.kind === "allow_once",
+                  )
+                    ? "Cursor did not offer a one-time approval. Deny this request to continue safely."
+                    : undefined
+                }
+                onClick={() =>
+                  act(
+                    "permission.reply",
+                    { requestId: p.id, decision: "accept" },
+                    c.id,
+                    c.version,
+                  )
+                }
+              >
+                Allow once
+              </button>
+            </div>
+          ),
+        )}
       <div className="composer" onPointerDown={() => engagePanel(c.id)}>
         {attachments.map((a) => (
           <button
@@ -1360,7 +1376,12 @@ function Chat({
             localStorage.setItem("draft:" + c.id, e.target.value);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              e.nativeEvent.keyCode !== 229
+            ) {
               e.preventDefault();
               void send();
             }

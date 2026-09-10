@@ -1233,3 +1233,22 @@ select:focus-visible {
   color: var(--muted);
   font-size: 12px;
 }
+.user-questions fieldset {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.question-option input {
+  width: auto;
+  margin-top: 4px;
+}
+.question-option small {
+  display: block;
+  color: var(--muted);
+}
