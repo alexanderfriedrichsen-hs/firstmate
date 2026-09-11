@@ -107,6 +107,7 @@ Once idle, **Park** stops that runner.
 Unknown delivery outcomes remain visible and block duplicate dispatch.
 
 Creating a **Managed** ticket queues an automatic wake.
+Editing its title, brief, priority, links, or handling, reopening it, or satisfying its dependencies also queues a wake, including for tickets that were waiting on the one that just became satisfied.
 Firstmate picks it up when dispatch is enabled, its conversation is idle, and you have returned control to automation.
 **Pause automatic work** retains your input ownership until you select **Enable automatic work**, even after you close the browser.
 To switch the Codex model for future turns, select **Model** in an idle conversation with no pending input.
