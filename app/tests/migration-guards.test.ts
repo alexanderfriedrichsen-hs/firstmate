@@ -266,3 +266,47 @@ test("returned or ambiguous conversation leases cannot resume from a guessed id"
     f.close();
   }
 });
+
+test("queued legacy adoption rejects a different explicit repository hint", () => {
+  const f = fixture();
+  try {
+    f.s.setting("project", {
+      source: "/projects/firstmate",
+      remote: "git@github.com:example/firstmate.git",
+    });
+    f.s.setting("legacy:" + f.t.id, {
+      management: "external",
+      metadata: {},
+      raw: "- [ ] queued-task - Fix delivery (repo: joinera)",
+    });
+    assert.equal(
+      f.s.adoptionEligibility(f.s.ticket(f.t.id, user)).eligible,
+      false,
+    );
+    assert.throws(
+      () => f.cmd("ticket.adopt"),
+      /repository.*configured project/i,
+    );
+    assert.equal(f.s.setting("legacy:" + f.t.id).management, "external");
+    f.s.setting("project", {
+      source: "/projects/joinera",
+      remote: "git@github.com:joinhandshake/joinera.git",
+    });
+    assert.equal(
+      f.s.adoptionEligibility(f.s.ticket(f.t.id, user)).eligible,
+      true,
+    );
+    f.s.setting("legacy:" + f.t.id, {
+      management: "external",
+      metadata: {},
+      raw: "- [ ] queued-task - Fix delivery (repo: another-owner/joinera)",
+    });
+    assert.equal(
+      f.s.adoptionEligibility(f.s.ticket(f.t.id, user)).eligible,
+      false,
+    );
+  } finally {
+    f.s.db.close();
+    fs.rmSync(f.home, { recursive: true, force: true });
+  }
+});

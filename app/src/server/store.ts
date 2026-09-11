@@ -219,6 +219,37 @@ export class Store {
         eligible: false,
         reason: "Configure a project source before adopting queued work",
       };
+    const project = this.setting("project");
+    const normalizeRepository = (value: string) =>
+      value
+        .trim()
+        .replace(/^https?:\/\/[^/]+\//i, "")
+        .replace(/^[^@]+@[^:]+:/, "")
+        .replace(/\.git\/?$/i, "")
+        .replace(/\/$/, "")
+        .toLowerCase();
+    const remote = normalizeRepository(String(project.remote ?? ""));
+    const source = normalizeRepository(String(project.source));
+    const names = new Set([path.basename(source), path.basename(remote)]);
+    const hints = [
+      ...String(legacy.raw ?? t.brief ?? "").matchAll(
+        /\((?:repo|project):\s*([^)]*)\)/gi,
+      ),
+    ].map((match) => normalizeRepository(match[1]));
+    if (
+      hints.some(
+        (hint) =>
+          !hint ||
+          (hint.includes("/")
+            ? hint !== remote && hint !== source
+            : !names.has(hint)),
+      )
+    )
+      return {
+        eligible: false,
+        reason:
+          "The imported repository does not match the configured project. Configure its project before adopting this ticket.",
+      };
     if (this.setting("migration-conflict:" + t.id))
       return {
         eligible: false,
