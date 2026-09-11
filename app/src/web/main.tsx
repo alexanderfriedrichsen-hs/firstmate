@@ -607,6 +607,9 @@ function App() {
                   priority: f.get("priority"),
                   handling: f.get("human") ? "human_only" : "agent_managed",
                   kind: f.get("kind"),
+                  ...(f.get("projectId")
+                    ? { projectId: String(f.get("projectId")) }
+                    : {}),
                   links,
                 });
                 await refresh();
@@ -635,6 +638,17 @@ function App() {
                 rows={4}
                 placeholder="Outcome, context, and acceptance criteria"
               />
+            </label>
+            <label>
+              Project
+              <select name="projectId" aria-label="Project" defaultValue="">
+                <option value="">Let Firstmate choose from the brief</option>
+                {(snapshot.projects ?? []).map((project: any) => (
+                  <option key={project.id} value={project.id}>
+                    {project.id} · {project.remote}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="form-row">
               <label>
@@ -1357,19 +1371,26 @@ function Chat({
             )
             .map((m: any) => (
               <article
-                className={"message " + m.role}
+                className={
+                  "message " +
+                  (m.kind === "scheduled_heartbeat"
+                    ? "scheduled-heartbeat"
+                    : m.role)
+                }
                 data-message-id={m.id}
                 id={m.id}
                 key={m.id}
               >
                 <div className="message-author">
-                  {m.role === "user"
-                    ? "You"
-                    : m.role === "assistant"
-                      ? c.role === "supervisor"
-                        ? "Firstmate"
-                        : "Worker"
-                      : "Activity"}
+                  {m.kind === "scheduled_heartbeat"
+                    ? "System"
+                    : m.role === "user"
+                      ? "You"
+                      : m.role === "assistant"
+                        ? c.role === "supervisor"
+                          ? "Firstmate"
+                          : "Worker"
+                        : "Activity"}
                   <a
                     href={"#message/" + c.id + "/" + encodeURIComponent(m.id)}
                     title="Link to message"
@@ -1393,7 +1414,12 @@ function Chat({
                     {a.name} ↗
                   </a>
                 ))}
-                {m.kind === "activity" ? (
+                {m.kind === "scheduled_heartbeat" ? (
+                  <details className="heartbeat-message">
+                    <summary>Scheduled fleet review</summary>
+                    <div className="message-body">{m.content}</div>
+                  </details>
+                ) : m.kind === "activity" ? (
                   <Activity content={m.content} />
                 ) : (
                   <div className="message-body">
@@ -1676,6 +1702,11 @@ function TicketDetail({
         {t.slug} · {labels[t.status]}
       </div>
       <h2>{t.title}</h2>
+      <p className="subtle" aria-label="Ticket project">
+        Project: {detail?.project?.id ?? t.projectId ?? "Not selected"}
+        {detail?.project?.remote && <> · {detail.project.remote}</>}
+      </p>
+      {detail?.projectError && <p className="notice">{detail.projectError}</p>}
       <label>
         Priority
         <select

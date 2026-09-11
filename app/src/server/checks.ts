@@ -21,8 +21,14 @@ export function launchChecks(store: Store, ticketId: string, jobId: string) {
   const worker = workers.at(-1);
   if (!worker || worker.state !== "idle")
     throw new Error("Settle the worker before freezing a revision");
-  const project = store.setting("project");
+  const project = store.projectForTicket(t);
+  if (git(worker.cwd, ["remote", "get-url", "origin"]) !== project.remote)
+    throw new Error("Worker repository differs from ticket project");
   const joinera = /joinhandshake[/:]joinera(?:\.git)?$/.test(project.remote);
+  if (!joinera && project.id !== "default")
+    throw new Error(
+      "Native validation commands are not configured for project " + project.id,
+    );
   const plan = joinera
     ? ["validation", "review", "ci"]
     : ["validation", "review", "ci"];
@@ -95,7 +101,8 @@ export function launchChecks(store: Store, ticketId: string, jobId: string) {
     revision: key,
     revisionFacts: revision,
     commands,
-    lease,
+    lease: { ...lease, source: project.source, remote: project.remote },
+    project,
   };
   atomic(path.join(configDir, "config.json"), JSON.stringify(config));
   store.command(actor, {

@@ -36,7 +36,7 @@ export function assertDraftCurrent(
 export async function launchDraft(store: Store, job: any) {
   const t = store.ticket(job.target_id, actor);
   const p = JSON.parse(job.payload);
-  const project = store.setting("project");
+  const project = store.projectForTicket(t);
   if (!/joinhandshake[/:]joinera(?:\.git)?$/.test(project?.remote ?? ""))
     throw new Error("Draft adapter supports Joinera only");
   const facts = store.setting("revision:" + t.revision);
@@ -44,6 +44,8 @@ export async function launchDraft(store: Store, job: any) {
   if (!facts || !source)
     throw new Error("Freeze and validate a revision first");
   const worker = store.conversation(source.conversationId, actor);
+  if (git(source.cwd, ["remote", "get-url", "origin"]) !== project.remote)
+    throw new Error("Draft source repository differs from ticket project");
   if (
     worker.state !== "idle" ||
     git(source.cwd, ["status", "--porcelain"]) ||

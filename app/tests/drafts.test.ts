@@ -64,6 +64,12 @@ function publicationFixture() {
     execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   git("init", "-q", "-b", "draft-test");
   git(
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/joinhandshake/joinera.git",
+  );
+  git(
     "-c",
     "user.name=Fixture",
     "-c",
@@ -99,6 +105,7 @@ function publicationFixture() {
     version: 1,
   });
   s.setting("project", {
+    source: cwd,
     remote: "https://github.com/joinhandshake/joinera.git",
   });
   s.setting("revision:frozen", { head, base: head });

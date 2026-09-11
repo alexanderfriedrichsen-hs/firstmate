@@ -1,3 +1,4 @@
+import { projects, ticketProject, assertProjectScope } from "./projects.ts";
 import { mcpAnswer } from "./elicitation.ts";
 import {
   configureHeartbeat,
@@ -200,6 +201,34 @@ export class Store {
         "App ownership was released; this history is read-only",
       );
   }
+  projects() {
+    return projects(this);
+  }
+  projectForTicket(ticket: Ticket) {
+    const project =
+      this.setting("ticket-project:" + ticket.id) ??
+      ticketProject(this, ticket);
+    assertProjectScope(project, ticket);
+    return project;
+  }
+  projectChecks(ticket: Ticket): string[] {
+    try {
+      return this.projectForTicket(ticket).requiredChecks ?? [];
+    } catch {
+      return !this.setting("project")?.source
+        ? (this.setting("project")?.requiredChecks ?? [])
+        : [];
+    }
+  }
+  projectForConversation(c: Conversation) {
+    return (
+      this.setting("conversation-project:" + c.id) ?? this.setting("project")
+    );
+  }
+  bindProject(c: Conversation, project: any) {
+    this.setting("conversation-project:" + c.id, project);
+    if (c.ticketId) this.setting("ticket-project:" + c.ticketId, project);
+  }
   externallyManaged(ticketId: string) {
     return this.setting("legacy:" + ticketId)?.management === "external";
   }
@@ -214,12 +243,19 @@ export class Store {
         eligible: false,
         reason: "Only a queued externally managed ticket can be adopted",
       };
-    if (!this.setting("project")?.source)
+    let project;
+    try {
+      project = ticketProject(this, {
+        ...t,
+        brief: String(legacy.raw ?? t.brief),
+      });
+    } catch {
       return {
         eligible: false,
-        reason: "Configure a project source before adopting queued work",
+        reason:
+          "The imported repository does not match the configured project. Configure a project source or select an available project before adopting this ticket.",
       };
-    const project = this.setting("project");
+    }
     const normalizeRepository = (value: string) =>
       value
         .trim()
@@ -658,7 +694,9 @@ export class Store {
         )
       )
         throw new Conflict("One Firstmate already exists");
-      const project = this.setting("project");
+      const project = v.ticketId
+        ? this.projectForTicket(this.ticket(v.ticketId, actor))
+        : undefined;
       if (v.role === "worker" && !project?.source)
         throw new Conflict("Configure a project source first");
       const conv: Conversation = {
@@ -667,12 +705,13 @@ export class Store {
         cwd:
           v.role === "supervisor"
             ? path.join(this.home, "workspace")
-            : project.source,
+            : project!.source,
         incarnation: 0,
         state: "planned",
         inputOwner: "automation",
         version: 1,
       };
+      if (project) this.bindProject(conv, project);
       this.putConversation(conv);
       this.outbox(c, "conversation.launch", conv.id, {});
       return { conversation: conv, ticketId: v.ticketId };
@@ -688,7 +727,21 @@ export class Store {
         ].includes(c.type)
       )
         this.validateModelEffort(conv.provider, conv.model, conv.effort);
-      if (conv.ticketId) this.assertManaged(conv.ticketId);
+      if (conv.ticketId) {
+        this.assertManaged(conv.ticketId);
+        if (
+          [
+            "conversation.send",
+            "conversation.resume",
+            "conversation.steer",
+          ].includes(c.type) &&
+          this.projectForConversation(conv)?.remote !==
+            this.projectForTicket(this.ticket(conv.ticketId, actor)).remote
+        )
+          throw new Conflict(
+            "This conversation belongs to the previous project; create a new worker for the selected project",
+          );
+      }
       if (c.expectedVersion !== conv.version)
         throw new Conflict("Conversation changed; refresh before retrying");
       if (conv.retiredAt)
@@ -832,7 +885,22 @@ export class Store {
           )
             throw new Denied("Attachment not found");
         const mid = randomUUID();
-        this.message(conv.id, mid, "user", text, "message");
+        const scheduledHeartbeat =
+          actor.kind === "collector" &&
+          actor.id === "scheduler" &&
+          typeof p.wakeId === "string" &&
+          this.db
+            .prepare(
+              "SELECT 1 FROM wakes WHERE id=? AND json_extract(data,'$.kind')='heartbeat'",
+            )
+            .get(p.wakeId);
+        this.message(
+          conv.id,
+          mid,
+          "user",
+          text,
+          scheduledHeartbeat ? "scheduled_heartbeat" : "message",
+        );
         for (const id of attachments)
           this.db
             .prepare("INSERT OR IGNORE INTO message_attachments VALUES(?,?)")
@@ -938,6 +1006,7 @@ export class Store {
     const t = this.ticket(c.targetId!, actor);
     const beforeChange = JSON.stringify({
       title: t.title,
+      projectId: t.projectId,
       brief: t.brief,
       priority: t.priority,
       links: t.links,
@@ -986,6 +1055,12 @@ export class Store {
       const eligibility = this.adoptionEligibility(t);
       if (!eligibility.eligible) throw new Conflict(eligibility.reason);
       const legacy = this.setting("legacy:" + t.id);
+      const project = ticketProject(this, {
+        ...t,
+        brief: String(legacy.raw ?? t.brief),
+      });
+      this.setting("ticket-project:" + t.id, project);
+      t.projectId = project.id;
       this.setting("legacy:" + t.id, {
         ...legacy,
         management: "app",
@@ -1059,7 +1134,7 @@ export class Store {
         )
       )
         throw new Conflict("An independent review is already active");
-      const project = this.setting("project");
+      const project = this.projectForTicket(t);
       const conv: Conversation = {
         id: randomUUID(),
         ticketId: t.id,
@@ -1074,6 +1149,7 @@ export class Store {
         inputOwner: "automation",
         version: 1,
       };
+      this.bindProject(conv, project);
       this.putConversation(conv);
       this.outbox(c, "conversation.launch", conv.id, {});
       this.outbox(c, "conversation.send", conv.id, {
@@ -1088,7 +1164,8 @@ export class Store {
       if (
         actor.kind !== "user" &&
         !(
-          actor.kind === "supervisor" && this.setting("project")?.draftPrEnabled
+          actor.kind === "supervisor" &&
+          this.projectForTicket(t)?.draftPrEnabled
         )
       )
         throw new Denied(
@@ -1155,12 +1232,13 @@ export class Store {
         role: "worker",
         stage: "repair",
         baseRevision: t.revision,
-        cwd: this.setting("project").source,
+        cwd: this.projectForTicket(t).source,
         incarnation: 0,
         state: "planned",
         inputOwner: "automation",
         version: 1,
       };
+      this.bindProject(conv, this.projectForTicket(t));
       this.putConversation(conv);
       this.outbox(c, "conversation.launch", conv.id, {});
       this.outbox(c, "conversation.send", conv.id, {
@@ -1177,6 +1255,7 @@ export class Store {
     } else if (c.type === "ticket.update") {
       const v = z
         .object({
+          projectId: z.string().min(1).optional(),
           title: z.string().min(1).max(240).optional(),
           brief: z.string().max(100000).optional(),
           priority: priority.optional(),
@@ -1188,6 +1267,32 @@ export class Store {
         .strict()
         .parse(p);
       v.links?.forEach(validateLink);
+      if (v.projectId !== undefined && v.projectId !== t.projectId) {
+        if (actor.kind === "worker")
+          throw new Denied("Only the operator or Firstmate can route projects");
+        const nextProject = ticketProject(this, {
+          ...t,
+          projectId: v.projectId,
+        });
+        if (
+          t.revision ||
+          this.setting("writerReservation:" + t.id) ||
+          this.conversations(actor).some(
+            (x) =>
+              x.ticketId === t.id &&
+              !["parked", "lost", "failed"].includes(x.state),
+          ) ||
+          this.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE target_id IN (SELECT id FROM conversations WHERE ticket_id=?) AND state IN ('pending','dispatching','uncertain')",
+            )
+            .get(t.id)
+        )
+          throw new Conflict(
+            "Park and settle existing workers before changing project; frozen revisions cannot move projects",
+          );
+        this.setting("ticket-project:" + t.id, nextProject);
+      }
       if (v.handling && v.handling !== t.handling) {
         user();
         if (
@@ -1390,6 +1495,7 @@ export class Store {
       beforeChange !==
         JSON.stringify({
           title: t.title,
+          projectId: t.projectId,
           brief: t.brief,
           priority: t.priority,
           links: t.links,
@@ -1571,6 +1677,24 @@ export class Store {
       .reverse()
       .map((message) => ({
         ...message,
+        // Older releases persisted scheduled prompts as ordinary user messages.
+        // Authenticate their scheduler provenance instead of hiding user-authored text.
+        kind:
+          message.kind === "message" &&
+          message.role === "user" &&
+          message.content.startsWith("Scheduled fleet heartbeat. ") &&
+          this.db
+            .prepare(
+              `SELECT 1 FROM outbox o JOIN commands c ON c.id=o.command_id
+            WHERE json_extract(o.payload,'$.messageId')=? AND o.target_id=?
+            AND o.kind='conversation.send'
+            AND json_extract(c.actor,'$.kind')='collector'
+            AND json_extract(c.actor,'$.id')='scheduler'
+            AND json_extract(o.payload,'$.text')=?`,
+            )
+            .get(message.id, cid, message.content)
+            ? "scheduled_heartbeat"
+            : message.kind,
         attachments: this.db
           .prepare(
             "SELECT a.id,a.name,a.media_type FROM artifacts a JOIN message_attachments ma ON ma.artifact_id=a.id WHERE ma.message_id=?",
@@ -1580,7 +1704,15 @@ export class Store {
   }
   detail(id: string, actor: Actor) {
     const ticket = this.ticket(id, actor);
+    let project, projectError;
+    try {
+      project = this.projectForTicket(ticket);
+    } catch (error) {
+      projectError = String(error);
+    }
     return {
+      project: project ? { id: project.id, remote: project.remote } : undefined,
+      projectError,
       ticket,
       attempts: this.attempts(id),
       findings: (
@@ -1594,8 +1726,8 @@ export class Store {
       evidence: this.evidence(id),
       revisionFacts: this.setting("revision:" + ticket.revision),
       ciConfiguration: {
-        requiredChecks: this.setting("project")?.requiredChecks ?? [],
-        configured: !!this.setting("project")?.requiredChecks?.length,
+        requiredChecks: project?.requiredChecks ?? [],
+        configured: !!project?.requiredChecks?.length,
       },
       dependencies: this.db
         .prepare(

@@ -1342,3 +1342,19 @@ select:focus-visible {
 .heartbeat-attention {
   color: var(--accent);
 }
+
+.message.scheduled-heartbeat {
+  padding: 8px 0;
+  color: var(--muted);
+}
+.message.scheduled-heartbeat .message-author {
+  margin-bottom: 4px;
+}
+.heartbeat-message summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.heartbeat-message .message-body {
+  font-size: 13px;
+  margin-top: 8px;
+}

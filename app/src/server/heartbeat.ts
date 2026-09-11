@@ -98,7 +98,7 @@ export function heartbeatStatus(store: Store, time = Date.now()) {
         id: "project_modes",
         status: "partial",
         description:
-          "Native validation, review, and draft PR workflows are supported; multi-project routing and all legacy delivery modes are not yet equivalent.",
+          "Registered projects route to isolated native worker, validation, and review checkouts; all legacy delivery modes and per-project check configuration are not yet equivalent.",
       },
     ],
   };

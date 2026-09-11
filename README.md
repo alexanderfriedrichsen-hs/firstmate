@@ -156,7 +156,13 @@ Legacy workers remain externally managed; migration does not silently attach or 
 Restart the legacy controller or watcher manually only after a successful rollback releases app ownership.
 
 Adoption applies only to a queued or backlog ticket still marked externally managed with agent-managed handling; the app rejects any other ticket outright.
-If the imported ticket names a specific repository, it must match the configured project's source or remote before adoption becomes eligible, so adoption checks a single configured project and multi-project routing remains partial.
+If the imported ticket names a specific repository, it must match an available registered project before adoption becomes eligible.
+The native project catalog includes the configured source as `default` and clones under this home's `projects/` listed in `data/projects.md`.
+Read the scoped `projects` resource and set `projectId` on ticket creation or update before launching a worker.
+An unambiguous GitHub PR reference can resolve an existing ticket's project; otherwise, multiple available projects require explicit selection.
+Worker, review, repair, and check leases stay bound to that project.
+To correct an old ticket's repository, park and settle its workers, update `projectId`, and create a new worker; old chats keep their original workspace and history.
+Tickets with frozen revisions cannot change projects.
 Conflicting legacy updates, non-descriptive legacy metadata, prior status history, holds, existing worker attempts, or an outstanding adoption conversation block adoption until you reconcile them.
 Adopting a ticket always requires your explicit **Adopt queued ticket** action in the ticket detail view; the app never automatically takes over a retained worker.
 

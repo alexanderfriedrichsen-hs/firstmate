@@ -14,6 +14,7 @@ export function git(cwd: string, args: string[]) {
     cwd,
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
+    timeout: 30000,
   }).trim();
 }
 export function captureRevision(

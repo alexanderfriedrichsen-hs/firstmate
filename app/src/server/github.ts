@@ -126,7 +126,7 @@ export async function collectPullRequests(
       base: pr.base.sha,
       merged: pr.merged,
       mergeCommit: pr.merge_commit_sha,
-      requiredChecks: store.setting("project")?.requiredChecks ?? [],
+      requiredChecks: store.projectChecks(t),
       state: pr.state,
       checks: checks.check_runs?.map((r: any) => [
         r.id,
@@ -178,8 +178,7 @@ export async function collectPullRequests(
     ))
       checkNames.set(String(check.app?.id) + ":" + check.name, check);
     const allChecks = [...checkNames.values()];
-    const requiredContexts: string[] =
-      store.setting("project")?.requiredChecks ?? [];
+    const requiredContexts: string[] = store.projectChecks(t);
     const observedNames = new Set([
       ...allChecks.map((r: any) => r.name),
       ...(status.statuses ?? []).map((s: any) => s.context),

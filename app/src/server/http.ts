@@ -271,8 +271,30 @@ export function serve(
           return send(404, { error: "Resource not found" });
         return send(200, heartbeatStatus(store));
       }
+      if (u.pathname === "/v1/projects") {
+        if (actor.kind !== "user" && actor.kind !== "supervisor")
+          return send(404, { error: "Resource not found" });
+        const projects = store
+          .projects()
+          .map(({ id, remote, mode }) => ({
+            id,
+            remote,
+            mode: mode ?? "configured",
+          }));
+        return send(200, { projects, count: projects.length });
+      }
       if (u.pathname === "/v1/snapshot")
         return send(200, {
+          projects:
+            actor.kind === "user" || actor.kind === "supervisor"
+              ? store
+                  .projects()
+                  .map(({ id, remote, mode }) => ({
+                    id,
+                    remote,
+                    mode: mode ?? "configured",
+                  }))
+              : undefined,
           tickets: store.tickets(actor),
           conversations: store.conversations(actor),
           policy: store.setting("policy"),

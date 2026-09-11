@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Store } from "../src/server/store.ts";
 import { Runtime } from "../src/server/runtime.ts";
@@ -227,6 +228,23 @@ test(
         cwd: path.join(f.home, "worker"),
         providerId: "worker-exact",
       };
+      fs.mkdirSync(worker.cwd, { recursive: true });
+      execFileSync("git", ["init", "-q"], { cwd: worker.cwd });
+      execFileSync(
+        "git",
+        ["remote", "add", "origin", "https://github.com/example/worker"],
+        { cwd: worker.cwd },
+      );
+      f.store.setting("project", {
+        source: worker.cwd,
+        remote: "https://github.com/example/worker",
+      });
+      f.store.bindProject(worker, {
+        id: "default",
+        source: worker.cwd,
+        remote: "https://github.com/example/worker",
+        requiredChecks: [],
+      });
       f.store.putConversation(worker as any);
       const work = await f.launch(worker);
       assert.doesNotMatch(

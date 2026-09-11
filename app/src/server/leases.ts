@@ -30,9 +30,6 @@ export function prepareLeaseRetirement(
   const blockers: string[] = [];
   if (store.setting("policy")?.paused !== true)
     blockers.push("Pause automatic dispatch before retiring leases");
-  const project = store.setting("project");
-  if (!project?.source || !project?.remote)
-    throw new Error("Configure an explicit project before retiring leases");
   const c =
     request.kind === "conversation"
       ? store
@@ -44,6 +41,11 @@ export function prepareLeaseRetirement(
       ? store.setting("check:" + request.targetId)
       : undefined;
   if (!c && !job) throw new Error("Unknown lease target");
+  const project = c
+    ? store.projectForConversation(c)
+    : (job.project ?? store.setting("project"));
+  if (!project?.source || !project?.remote)
+    throw new Error("Configure an explicit project before retiring leases");
   const lease = c ? store.setting("lease:" + c.id) : job.lease;
   if (!lease?.path || !lease.lease_id || !lease.lease_holder)
     throw new Error("Recorded lease identity is incomplete");
@@ -223,6 +225,7 @@ export function prepareLeaseRetirement(
     schema: "firstmate.lease-retirement.v1",
     request,
     cwd,
+    source: project.source,
     leaseId: lease.lease_id,
     leaseHolder: lease.lease_holder,
     head,
@@ -262,7 +265,7 @@ export function executeLeaseRetirement(
       "--if-lease-holder",
       report.leaseHolder,
     ],
-    store.setting("project").source,
+    report.source,
   );
   store.setting("retired-lease:" + request.kind + ":" + request.targetId, {
     ...report,

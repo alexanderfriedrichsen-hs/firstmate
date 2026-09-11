@@ -685,6 +685,7 @@ export class Runtime {
           targetId: supervisor.id,
           expectedVersion: supervisor.version,
           payload: {
+            wakeId: wake.id,
             text:
               (data.kind === "heartbeat"
                 ? "Scheduled fleet heartbeat. Review agent-managed tickets and verified runner/lease/dispatch health. Give a concise status update when progress or action is meaningful; acknowledge silently when nothing changed, handle only authorized follow-ups, and acknowledge this wake after reviewing. Retained external workers are observation-only: do not adopt or control them. A quiet long-running tool is not proof of a stall. Do not interrupt busy workers or answer human questions. "
@@ -733,8 +734,19 @@ export class Runtime {
         ["completed", "cancelled"].includes(t.status)
       )
         throw new Error("Ticket cannot dispatch");
+      const boundProject = this.store.projectForConversation(c);
+      if (boundProject?.remote !== this.store.projectForTicket(t).remote)
+        throw new Error(
+          "Conversation project differs from ticket; create a new worker",
+        );
+      if (
+        c.providerId &&
+        git(c.cwd, ["remote", "get-url", "origin"]) !== boundProject.remote
+      )
+        throw new Error("Existing worker repository identity changed");
       if (!c.providerId) {
-        const source = this.store.setting("project").source;
+        const project = this.store.projectForConversation(c);
+        const source = project.source;
         const allocation = JSON.parse(
           execFileSync(
             "treehouse",
@@ -754,7 +766,7 @@ export class Runtime {
           encoding: "utf8",
           timeout: 30000,
         }).trim();
-        if (remote !== this.store.setting("project").remote)
+        if (remote !== project.remote)
           throw new Error("Allocated repository identity differs");
         c.cwd = root;
         if (c.stage === "review" || c.stage === "repair") {
@@ -768,7 +780,7 @@ export class Runtime {
               : ["switch", "-c", "firstmate/repair-" + c.id, revision.head],
           );
         }
-        this.store.setting("lease:" + c.id, { ...allocation, remote });
+        this.store.setting("lease:" + c.id, { ...allocation, remote, source });
       }
     }
     c.incarnation++;
@@ -894,7 +906,7 @@ export class Runtime {
       (c.role === "supervisor"
         ? "Use the scoped Firstmate agent CLI to inspect managed tickets and submit commands. Human-only records are unavailable."
         : "") +
-      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.` +
+      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. Read --resource projects for the available project IDs. For every project task, ticket.create with title/brief/kind/projectId using that catalog, or ticket.update with projectId before any worker launches. conversation.create automatically allocates an isolated Treehouse lease from that project; never allocate from the Firstmate checkout or ask a worker to escape its assigned workspace. For existing PR repairs, include the PR URL and exact branch in the brief; the worker fetches that branch into its assigned isolated checkout. If an earlier worker got the wrong project, park it, set ticket.projectId, and create a new worker; preserve its history. You may ticket.create with title/brief/kind/projectId, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.` +
       "\n" +
       orders.text +
       (digest

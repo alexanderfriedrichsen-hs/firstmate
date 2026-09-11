@@ -66,6 +66,14 @@ test(
       ].join("\n\n"),
       "message",
     );
+    const heartbeatId = randomUUID();
+    store.message(
+      cid,
+      heartbeatId,
+      "user",
+      "HEARTBEAT_PRIVATE_DETAIL_SENTINEL",
+      "scheduled_heartbeat",
+    );
     store.artifact(
       undefined,
       "sandbox.html",
@@ -93,6 +101,29 @@ test(
       await page
         .getByRole("heading", { name: "Firstmate", exact: true })
         .waitFor();
+      const heartbeat = page.locator(`[data-message-id="${heartbeatId}"]`);
+      assert.equal(
+        await heartbeat.locator("details").getAttribute("open"),
+        null,
+      );
+      assert.equal(
+        await heartbeat
+          .getByText("HEARTBEAT_PRIVATE_DETAIL_SENTINEL")
+          .isVisible(),
+        false,
+      );
+      await heartbeat
+        .getByText("Scheduled fleet review", { exact: true })
+        .click();
+      assert.equal(
+        await heartbeat
+          .getByText("HEARTBEAT_PRIVATE_DETAIL_SENTINEL")
+          .isVisible(),
+        true,
+      );
+      await heartbeat
+        .getByText("Scheduled fleet review", { exact: true })
+        .click();
       await page.route("**/v1/catalog?topic=models&conversationId=*", (route) =>
         route.fulfill({
           json: {
@@ -564,7 +595,7 @@ test(
         (
           store.db
             .prepare(
-              "SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND role='user'",
+              "SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND role='user' AND kind='message'",
             )
             .get(cid) as any
         ).n,
@@ -814,11 +845,25 @@ test(
           .evaluate((el) => el.getBoundingClientRect().width),
         272,
       );
+      store.setting("project", {
+        source: home,
+        remote: "https://github.com/example/project.git",
+        profile: "code_only",
+        requiredChecks: [],
+      });
+      await page.reload();
       await page
         .getByRole("button", { name: "New ticket", exact: true })
         .click();
       const dialog = page.getByRole("dialog");
       await dialog.waitFor();
+      await dialog
+        .getByLabel("Project", { exact: true })
+        .selectOption("default");
+      assert.equal(
+        await dialog.getByLabel("Project", { exact: true }).inputValue(),
+        "default",
+      );
       await page.keyboard.press("Shift+Tab");
       assert.equal(
         await dialog.evaluate((el) => el.contains(document.activeElement)),
@@ -826,6 +871,28 @@ test(
       );
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "hidden" });
+      await page
+        .getByRole("button", { name: "New ticket", exact: true })
+        .click();
+      await dialog
+        .getByLabel("Title", { exact: true })
+        .fill("Project routing fixture");
+      await dialog
+        .getByLabel("Project", { exact: true })
+        .selectOption("default");
+      await dialog
+        .getByRole("button", { name: "Create ticket", exact: true })
+        .click();
+      await page
+        .getByLabel("Ticket project", { exact: true })
+        .getByText("Project: default", { exact: false })
+        .waitFor();
+      assert.equal(
+        store
+          .tickets({ kind: "user", id: "test" })
+          .find((t) => t.title === "Project routing fixture")?.projectId,
+        "default",
+      );
       await page.getByRole("button", { name: "Work", exact: true }).click();
       const questionId = randomUUID();
       store.db.prepare("INSERT INTO permissions VALUES(?,?,?,?)").run(
