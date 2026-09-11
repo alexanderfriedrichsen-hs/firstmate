@@ -1048,6 +1048,47 @@ select:focus-visible {
 .markdown h2 {
   font-size: 20px;
 }
+.message-body .markdown {
+  white-space: normal;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown :not(pre) > code {
+  background: var(--surface-alt);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 0.9em;
+}
+.markdown pre {
+  white-space: pre;
+  overflow-x: auto;
+  overflow-wrap: normal;
+  max-width: 100%;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--accent);
+  margin-left: 0;
+  padding-left: 16px;
+  color: var(--muted);
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 24px;
+}
+.markdown-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.markdown-table th,
+.markdown-table td {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+}
+
 .modal:has(.artifact-reader) {
   width: min(1050px, 100%);
 }

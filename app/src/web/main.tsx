@@ -13,6 +13,7 @@ import {
 import { usePanelWidth } from "./panels.ts";
 import { ProviderSettings } from "./providers.tsx";
 import { UserQuestions } from "./questions.tsx";
+import { Markdown } from "./markdown.tsx";
 import {
   HeartbeatSettings,
   useHeartbeatHealth,
@@ -1395,7 +1396,13 @@ function Chat({
                 {m.kind === "activity" ? (
                   <Activity content={m.content} />
                 ) : (
-                  <div className="message-body">{m.content}</div>
+                  <div className="message-body">
+                    {m.role === "assistant" ? (
+                      <Markdown text={m.content} />
+                    ) : (
+                      m.content
+                    )}
+                  </div>
                 )}
               </article>
             ))}

@@ -1,44 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { Markdown } from "./markdown.tsx";
+export { Markdown } from "./markdown.tsx";
 import type { Conversation } from "../contracts.ts";
 type Api = (url: string) => Promise<any>;
 export const openArtifact = (id: string) =>
   window.dispatchEvent(new CustomEvent("artifact.open", { detail: id }));
-export function Markdown({ text }: { text: string }) {
-  const blocks = text.split(/(```[^\n]*\n[\s\S]*?```)/g);
-  return (
-    <div className="markdown">
-      {blocks.map((block, i) =>
-        block.startsWith("```") ? (
-          <pre key={i}>
-            <code>{block.replace(/^```[^\n]*\n/, "").replace(/```$/, "")}</code>
-          </pre>
-        ) : (
-          block
-            .split(/\n\s*\n/)
-            .filter(Boolean)
-            .map((part, j) => {
-              const h = part.match(/^(#{1,4})\s+([^\n]+)$/);
-              if (h)
-                return React.createElement(
-                  "h" + h[1].length,
-                  { key: i + ":" + j },
-                  h[2],
-                );
-              if (part.split("\n").every((line) => /^[-*] /.test(line)))
-                return (
-                  <ul key={i + ":" + j}>
-                    {part.split("\n").map((line, k) => (
-                      <li key={k}>{line.slice(2)}</li>
-                    ))}
-                  </ul>
-                );
-              return <p key={i + ":" + j}>{part}</p>;
-            })
-        ),
-      )}
-    </div>
-  );
-}
 export function ArtifactReader({ id, api }: { id: string; api: Api }) {
   const [data, setData] = useState<any>();
   const [error, setError] = useState("");

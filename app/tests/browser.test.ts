@@ -50,6 +50,22 @@ test(
           "message",
         );
     })();
+    const markdownId = randomUUID();
+    store.message(
+      cid,
+      markdownId,
+      "assistant",
+      [
+        "**Bold fixture** and *italic fixture* with `inline fixture`.",
+        "- First item\n- Second item",
+        "[Safe fixture](https://example.com/docs) [Unsafe fixture](javascript:alert%281%29)",
+        "```html\n**literal fixture** <script>literal code</script>\n```",
+        "| Name | Value |\n| --- | --- |\n| Parser | Safe |",
+        '<img src="https://example.com/tracker.png" onerror="window.markdownUnsafe=true"><script>window.markdownUnsafe=true</script>',
+        "![Explicit image](https://example.com/image.png)",
+      ].join("\n\n"),
+      "message",
+    );
     store.artifact(
       undefined,
       "sandbox.html",
@@ -155,6 +171,40 @@ test(
         "Initial history stays bounded",
       );
       const transcript = page.locator(".transcript");
+      const markdownMessage = page.locator(
+        '[data-message-id="' + markdownId + '"]',
+      );
+      assert.equal(
+        await markdownMessage.locator("strong").textContent(),
+        "Bold fixture",
+      );
+      assert.equal(
+        await markdownMessage.locator("em").textContent(),
+        "italic fixture",
+      );
+      assert.equal(await markdownMessage.locator("li").count(), 2);
+      assert.equal(await markdownMessage.locator("table tbody td").count(), 2);
+      assert.equal(
+        await markdownMessage.locator("pre code").textContent(),
+        "**literal fixture** <script>literal code</script>\n",
+      );
+      assert.equal(
+        await markdownMessage
+          .getByRole("link", { name: "Safe fixture", exact: true })
+          .getAttribute("href"),
+        "https://example.com/docs",
+      );
+      assert.equal(
+        await markdownMessage
+          .getByRole("link", { name: "Unsafe fixture", exact: true })
+          .count(),
+        0,
+      );
+      assert.equal(await markdownMessage.locator("script,img").count(), 0);
+      assert.equal(
+        await page.evaluate(() => (window as any).markdownUnsafe),
+        undefined,
+      );
       const bottomGap = () =>
         transcript.evaluate(
           (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
@@ -166,7 +216,7 @@ test(
           cid,
           streamId,
           "assistant",
-          "Streaming follow fixture\n".repeat(delta * 30),
+          "**Streaming** follow fixture\n".repeat(delta * 30),
           "message",
         );
         await page.waitForTimeout(180);
