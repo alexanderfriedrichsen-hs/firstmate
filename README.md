@@ -86,6 +86,7 @@ In **Settings**, enable dispatch when you want Firstmate or workers to run.
 
 To configure continuous integration (CI) evidence, pass `--required-checks "check name,another check"` to `setup`.
 A PR with unknown required checks cannot satisfy CI readiness.
+Only the configured source (`default`) carries required-checks configuration; registered projects added under `projects/` do not yet have their own.
 Review and validation results belong to a specific clean Git revision.
 Editing the source, moving the head or base, or receiving blocking feedback invalidates readiness.
 An idle provider turn does not complete a ticket.
@@ -160,7 +161,9 @@ If the imported ticket names a specific repository, it must match an available r
 The native project catalog includes the configured source as `default` and clones under this home's `projects/` listed in `data/projects.md`.
 Read the scoped `projects` resource and set `projectId` on ticket creation or update before launching a worker.
 An unambiguous GitHub PR reference can resolve an existing ticket's project; otherwise, multiple available projects require explicit selection.
+An unknown or no-longer-available `projectId`, or one that contradicts the ticket's repository hint or linked PR, is rejected until you correct the association.
 Worker, review, repair, and check leases stay bound to that project.
+Native validate, review, and CI checks currently run only for the configured `default` project or a Joinera remote; other registered projects cannot launch checks yet.
 To correct an old ticket's repository, park and settle its workers, update `projectId`, and create a new worker; old chats keep their original workspace and history.
 Tickets with frozen revisions cannot change projects.
 Conflicting legacy updates, non-descriptive legacy metadata, prior status history, holds, existing worker attempts, or an outstanding adoption conversation block adoption until you reconcile them.
@@ -220,6 +223,8 @@ Native health checks run at least every five minutes, and retained worker status
 Checks inspect runner identities, working directories, lease retirement, and delayed or uncertain dispatches without running legacy watcher scripts.
 Active managed or retained work receives an interval review opportunity.
 Firstmate reports meaningful progress or actions and acknowledges unchanged observations silently; empty healthy fleets do not start a model turn.
+Scheduled fleet-heartbeat prompts appear in chat collapsed under **Scheduled fleet review**, expandable on demand; the model and audit trail always receive the full prompt text, and a user cannot spoof this provenance by resending the same text.
+Chat history predating this behavior is authenticated retroactively from its recorded dispatch, so older scheduled prompts also render collapsed.
 Automatic delivery waits while dispatch is paused, Firstmate is busy, a question needs your answer, or you have taken over.
 Retained external workers remain observation-only. A quiet running session is a reason to check progress, not proof that it has stalled.
 The dashboard shows the last completed runtime loop, the last and next fleet checks, and health concerns. A loop older than one minute is stale.
@@ -231,7 +236,7 @@ Each Firstmate startup or exact-session resume loads bounded standing orders fro
 Automatic recovery resumes a lost Firstmate only after both recorded processes are dead and pending effects are reconciled; three attempts are allowed until a successful turn resets the budget.
 Retained GitHub PR links receive bounded read-only state observations every five minutes.
 These observations never establish native CI acceptance or change ticket ownership or completion.
-Settings lists remaining parity gaps: arbitrary legacy check hooks, authoritative legacy endpoint probing, secondmate recovery and routing, and all multi-project delivery modes.
+Settings lists remaining parity gaps: arbitrary legacy check hooks, authoritative legacy endpoint probing, secondmate recovery and routing, and all legacy delivery modes plus per-project check configuration.
 
 To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.
 The browser test uses an installed Chrome and a 10,000-message isolated fixture.
