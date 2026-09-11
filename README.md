@@ -202,15 +202,24 @@ Expired request replies are never retried; reconciliation records uncertain prio
 To apply this policy to a retained runner from an older release, interrupt and park it, then resume the same chat.
 Protocol fixtures cover permissions and session transport; they do not establish full native provider verification.
 
-Heartbeat is enabled by default and checks the fleet every ten minutes. Configure it in **Settings > Heartbeat** (1-120 minutes).
+Heartbeat is enabled by default.
+Fleet reviews run every ten minutes; configure their interval in **Settings > Heartbeat** (1-120 minutes).
+Native health checks run at least every five minutes, and retained worker status observations run every 15 seconds.
 Checks inspect runner identities, working directories, lease retirement, and delayed or uncertain dispatches without running legacy watcher scripts.
-Active managed work receives a concise Firstmate status review; unchanged idle fleets do not start a model turn.
+Active managed or retained work receives an interval review opportunity.
+Firstmate reports meaningful progress or actions and acknowledges unchanged observations silently; empty healthy fleets do not start a model turn.
 Automatic delivery waits while dispatch is paused, Firstmate is busy, a question needs your answer, or you have taken over.
 Retained external workers remain observation-only. A quiet running session is a reason to check progress, not proof that it has stalled.
 The dashboard shows the last completed runtime loop, the last and next fleet checks, and health concerns. A loop older than one minute is stale.
 A **Heartbeat needs attention** button appears in the footer when a loop goes stale or a check reports issues, and jumps to the dashboard.
 A heartbeat retries at most three presentations, ten minutes apart, until Firstmate acknowledges it with `wake.ack`.
-If retries are exhausted, inspect the conversation, then disable and re-enable heartbeat to retry. Disabling cancels pending heartbeat dispatch, without interrupting an active turn.
+Exhausted presentations remain recorded as missed acknowledgements; later fleet reviews continue.
+Disabling cancels pending heartbeat dispatch without interrupting an active turn.
+Each Firstmate startup or exact-session resume loads bounded standing orders from its own home, records the source files and scoped fleet snapshot in Context, and queues a startup review.
+Automatic recovery resumes a lost Firstmate only after both recorded processes are dead and pending effects are reconciled; three attempts are allowed until a successful turn resets the budget.
+Retained GitHub PR links receive bounded read-only state observations every five minutes.
+These observations never establish native CI acceptance or change ticket ownership or completion.
+Settings lists remaining parity gaps: arbitrary legacy check hooks, authoritative legacy endpoint probing, secondmate recovery and routing, and all multi-project delivery modes.
 
 To validate changes, run `npm run typecheck`, `npm test`, and `bin/fm-lint.sh`.
 The browser test uses an installed Chrome and a 10,000-message isolated fixture.

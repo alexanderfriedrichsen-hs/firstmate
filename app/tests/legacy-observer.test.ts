@@ -6,11 +6,13 @@ import path from "node:path";
 import { Store } from "../src/server/store.ts";
 import { homePath } from "../src/server/home.ts";
 import { importLegacy, snapshotLegacy } from "../src/server/migration.ts";
+import { Runtime } from "../src/server/runtime.ts";
+import { randomUUID } from "node:crypto";
 import { observeLegacy } from "../src/server/legacy-observer.ts";
 
 for (const adopted of [false, true])
   test(
-    "external status changes preserve evidence and wake only adopted work: " +
+    "external status changes preserve evidence and wake observation-only for retained and adopted work: " +
       adopted,
     () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "fm-observer-"));
@@ -52,7 +54,28 @@ for (const adopted of [false, true])
         observeLegacy(s);
         observeLegacy(s);
         const wakes = s.db.prepare("SELECT * FROM wakes").all() as any[];
-        assert.equal(wakes.length, adopted ? 1 : 0);
+        assert.equal(wakes.length, 1);
+        assert.equal(JSON.parse(wakes[0].data).observationOnly, true);
+        assert.equal(JSON.parse(wakes[0].data).observation, "Report ready");
+        const c: any = {
+          id: randomUUID(),
+          provider: "codex",
+          model: "test",
+          role: "supervisor",
+          cwd: s.home,
+          incarnation: 0,
+          state: "idle",
+          inputOwner: "automation",
+          version: 1,
+        };
+        s.putConversation(c);
+        s.setting("policy", { ...s.setting("policy"), paused: false });
+        new Runtime(s).scheduleWakes();
+        assert.equal(
+          (s.db.prepare("SELECT count(*) n FROM outbox").get() as any).n,
+          1,
+        );
+        assert.equal(s.externallyManaged(managed.id), !adopted);
         assert.doesNotMatch(JSON.stringify(wakes), /PRIVATE|private-task/);
         assert.equal(
           (s.db.prepare("SELECT count(*) n FROM artifacts").get() as any).n,
@@ -61,7 +84,7 @@ for (const adopted of [false, true])
         assert.equal(s.ticket(t.id, user).handling, "human_only");
         assert.equal(
           s.setting("legacyExternalChanges").requiresReconciliation,
-          true,
+          false,
         );
       } finally {
         s.db.close();

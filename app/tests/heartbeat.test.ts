@@ -217,7 +217,12 @@ test("health reports stale completed loops overdue scans and exhausted retries",
       ),
     );
     checkHeartbeat(f.store, t + 9000000);
-    assert.equal(f.store.setting("heartbeat").pendingWakeId, id);
+    assert.notEqual(f.store.setting("heartbeat").pendingWakeId, id);
+    assert.equal(
+      (f.store.db.prepare("SELECT state FROM wakes WHERE id=?").get(id) as any)
+        .state,
+      "exhausted",
+    );
     configureHeartbeat(f.store, false, 10, t + 9000000);
     configureHeartbeat(f.store, true, 10, t + 9000000);
     checkHeartbeat(f.store, t + 9600000);

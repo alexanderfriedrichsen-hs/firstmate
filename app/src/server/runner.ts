@@ -23,6 +23,7 @@ import type { ThreadStartParams } from "../protocol/v2/ThreadStartParams";
 import type { TurnStartParams } from "../protocol/v2/TurnStartParams";
 import { atomic, processIdentity } from "./home.ts";
 const file = process.argv[2];
+let cursorInstructionsSent = false;
 const config = JSON.parse(fs.readFileSync(file, "utf8"));
 const dir = path.dirname(file);
 let seq = 0;
@@ -455,7 +456,9 @@ async function handle(req: any) {
       identity();
       const model = req.model ?? config.model;
       const prompt =
-        config.instructions +
+        (cursorInstructionsSent
+          ? (config.ongoingInstructions ?? config.instructions)
+          : config.instructions) +
         "\n\nUser request:\n" +
         req.text +
         (req.attachments ?? [])
@@ -467,9 +470,13 @@ async function handle(req: any) {
               Buffer.from(a.base64, "base64").toString("utf8"),
           )
           .join("");
+      const hadInstructions = cursorInstructionsSent;
+      cursorInstructionsSent = true;
       void cursor
         .prompt(prompt, model)
         .then((result) => {
+          if (!hadInstructions && result.stopReason === "cancelled")
+            cursorInstructionsSent = false;
           state = "idle";
           emit("cursor.result", { ...result, model, turn: req.id });
           emit("runner.settled", {

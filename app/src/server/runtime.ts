@@ -1,3 +1,5 @@
+import { loadStandingOrders } from "./standing-orders.ts";
+import { observeExternalPr } from "./external-pr.ts";
 import { checkHeartbeat, heartbeatCompleted } from "./heartbeat.ts";
 import { nativeCommands } from "./native-commands.ts";
 import fs from "node:fs";
@@ -23,6 +25,16 @@ import { now, type Conversation } from "../contracts.ts";
 const internal = { kind: "user" as const, id: "runtime" };
 export function shellArgument(value: string): string {
   return "'" + value.replaceAll("'", "'\"'\"'") + "'";
+}
+
+export function verifiedDead(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error: any) {
+    return error.code === "ESRCH";
+  }
 }
 
 export class Runtime {
@@ -99,6 +111,8 @@ export class Runtime {
         }
       }
       checkHeartbeat(this.store);
+      this.scheduleRecovery();
+      this.scheduleExternalChecks();
       this.scheduleRetries();
       this.scheduleWakes();
       this.schedulePrPolls();
@@ -282,6 +296,104 @@ export class Runtime {
       );
     }
   }
+  externalCheckBusy = false;
+  scheduleExternalChecks() {
+    if (
+      this.externalCheckBusy ||
+      this.store.setting("policy").paused ||
+      this.store.setting("shadowMode")
+    )
+      return;
+    const t = this.store
+      .tickets({ kind: "supervisor", id: "observer" })
+      .find(
+        (t) =>
+          this.store.externallyManaged(t.id) &&
+          !["completed", "cancelled"].includes(t.status) &&
+          t.links.some((l) => l.kind === "github_pr") &&
+          (this.store.setting("external-pr-due:" + t.id) ?? 0) <= Date.now(),
+      );
+    if (!t) return;
+    this.store.setting("external-pr-due:" + t.id, Date.now() + 300000);
+    this.externalCheckBusy = true;
+    void observeExternalPr(this.store, t.id)
+      .then(() => {
+        if (this.owns()) this.store.setting("external-pr-error:" + t.id, null);
+      })
+      .catch((error) => {
+        if (this.owns())
+          this.store.setting("external-pr-error:" + t.id, {
+            at: now(),
+            message: String(error),
+          });
+      })
+      .finally(() => {
+        this.externalCheckBusy = false;
+      });
+  }
+  scheduleRecovery() {
+    if (this.store.setting("policy").paused || this.store.setting("shadowMode"))
+      return;
+    const c = this.store
+      .conversations(internal)
+      .find(
+        (c) =>
+          c.role === "supervisor" &&
+          !c.retiredAt &&
+          c.inputOwner === "automation" &&
+          c.providerId &&
+          ["lost", "failed"].includes(c.state),
+      );
+    if (!c) return;
+    const identity = this.identity(c);
+    if (
+      !identity ||
+      identity.incarnation !== c.incarnation ||
+      !identity.startIdentity ||
+      !verifiedDead(identity.pid) ||
+      alive(identity.pid, identity.startIdentity) ||
+      !identity.providerStartIdentity ||
+      !verifiedDead(identity.providerPid) ||
+      alive(identity.providerPid, identity.providerStartIdentity)
+    )
+      return;
+    if (
+      this.store.db
+        .prepare(
+          "SELECT 1 FROM outbox WHERE target_id=? AND state IN ('pending','dispatching','uncertain')",
+        )
+        .get(c.id) ||
+      this.store.db
+        .prepare(
+          "SELECT 1 FROM permissions WHERE conversation_id=? AND state IN ('pending','answering')",
+        )
+        .get(c.id)
+    )
+      return;
+    const key = "supervisor-recovery:" + c.id;
+    const prior = this.store.setting(key) ?? { attempts: 0, nextAt: 0 };
+    if (prior.attempts >= 3 || prior.nextAt > Date.now()) return;
+    this.store.db.transaction(() => {
+      this.store.command(
+        { kind: "user", id: "verified-runtime-recovery" },
+        {
+          commandId: randomUUID(),
+          type: "conversation.resume",
+          targetId: c.id,
+          expectedVersion: c.version,
+          payload: {},
+        },
+      );
+      this.store.setting(key, {
+        attempts: prior.attempts + 1,
+        nextAt: Date.now() + 300000,
+      });
+      this.store.event("supervision.recoveryQueued", c.id, {
+        reason:
+          "Verified runner and provider are dead; resume exact native session.",
+      });
+    })();
+  }
   schedulePrPolls() {
     if (this.store.setting("policy").paused || this.store.setting("shadowMode"))
       return;
@@ -443,6 +555,29 @@ export class Runtime {
       );
     }
   }
+  workerWake(c: Conversation, kind: string, key: string) {
+    if (!c.ticketId || this.store.externallyManaged(c.ticketId)) return;
+    const t = this.store.ticket(c.ticketId, internal);
+    if (
+      t.handling === "human_only" ||
+      ["completed", "cancelled"].includes(t.status)
+    )
+      return;
+    this.store.db.prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)").run(
+      kind + ":" + c.id + ":" + c.incarnation + ":" + key,
+      t.id,
+      "pending",
+      JSON.stringify({
+        kind,
+        conversationId: c.id,
+        instruction:
+          kind === "worker.question"
+            ? "A worker needs genuine user input. Surface it to the user; never invent an answer."
+            : "Inspect exact recorded identity and recover only after verifying ownership; do not spawn a duplicate writer.",
+      }),
+      now(),
+    );
+  }
   reconcile(c: Conversation) {
     this.reconcileExpiredReplies(c);
     if (!c.runnerId || c.state === "planned") return;
@@ -469,6 +604,7 @@ export class Runtime {
       !["lost", "failed"].includes(c.state)
     ) {
       c.state = "lost";
+      this.workerWake(c, "worker.lost", String(c.incarnation));
       c.version++;
       this.store.putConversation(c);
       this.store.event(
@@ -508,9 +644,16 @@ export class Runtime {
         )
         .all() as any[]
     ).find((w) => {
-      if (w.ticket_id && this.store.externallyManaged(w.ticket_id))
-        return false;
       const d = JSON.parse(w.data);
+      if (
+        w.ticket_id &&
+        this.store.externallyManaged(w.ticket_id) &&
+        !(
+          ["external.workerStatus", "external.prChanged"].includes(d.kind) &&
+          d.observationOnly === true
+        )
+      )
+        return false;
       return (
         (d.presentations ?? 0) < 3 &&
         (!d.nextAt || Date.parse(d.nextAt) <= Date.now())
@@ -544,7 +687,7 @@ export class Runtime {
           payload: {
             text:
               (data.kind === "heartbeat"
-                ? "Scheduled fleet heartbeat. Review agent-managed tickets and verified runner/lease/dispatch health. Give a concise status update for active work, handle only authorized follow-ups, and acknowledge this wake after reviewing. Retained external workers are observation-only: do not adopt or control them. A quiet long-running tool is not proof of a stall. Do not interrupt busy workers or answer human questions. "
+                ? "Scheduled fleet heartbeat. Review agent-managed tickets and verified runner/lease/dispatch health. Give a concise status update when progress or action is meaningful; acknowledge silently when nothing changed, handle only authorized follow-ups, and acknowledge this wake after reviewing. Retained external workers are observation-only: do not adopt or control them. A quiet long-running tool is not proof of a stall. Do not interrupt busy workers or answer human questions. "
                 : "") +
               `Actionable managed-work wake ${wake.id}: ${JSON.stringify(data)}. Inspect the current ticket, handle authorized follow-up, then commit wake.ack with this id. Ending your turn alone does not acknowledge it.`,
           },
@@ -602,13 +745,14 @@ export class Runtime {
               "--lease-holder",
               "firstmate-attempt-" + c.id,
             ],
-            { cwd: source, encoding: "utf8" },
+            { cwd: source, encoding: "utf8", timeout: 30000 },
           ),
         );
         const root = fs.realpathSync(allocation.path);
         const remote = execFileSync("git", ["remote", "get-url", "origin"], {
           cwd: root,
           encoding: "utf8",
+          timeout: 30000,
         }).trim();
         if (remote !== this.store.setting("project").remote)
           throw new Error("Allocated repository identity differs");
@@ -663,6 +807,86 @@ export class Runtime {
     )
       ? " --transferred-home"
       : "";
+    const orders = loadStandingOrders(this.store.home, c.role);
+    for (const source of orders.sources)
+      recordContext(
+        this.store,
+        c,
+        path.basename(source.path),
+        source.content,
+        source.reason,
+        source.path,
+      );
+    const scopedActor = { kind: "supervisor" as const, id: c.id };
+    const visibleTickets =
+      c.role === "supervisor" ? this.store.tickets(scopedActor) : [];
+    const visibleIds = new Set(visibleTickets.map((t) => t.id));
+    const digest =
+      c.role === "supervisor"
+        ? JSON.stringify({
+            tickets: visibleTickets.slice(0, 200).map((t) => ({
+              id: t.id,
+              title: t.title.slice(0, 500),
+              titleTruncated: t.title.length > 500,
+              status: t.status,
+              handling: t.handling,
+              external: this.store.externallyManaged(t.id),
+            })),
+            omittedTickets: Math.max(0, visibleTickets.length - 200),
+            conversations: this.store
+              .conversations(scopedActor)
+              .slice(0, 200)
+              .map((c) => ({
+                id: c.id,
+                ticketId: c.ticketId,
+                role: c.role,
+                state: c.state,
+                inputOwner: c.inputOwner,
+              })),
+            omittedConversations: Math.max(
+              0,
+              this.store.conversations(scopedActor).length - 200,
+            ),
+            wakeLimit: 200,
+            wakeNotice:
+              "Only the first 200 eligible wake summaries are included. Read the wakes resource for the current complete list.",
+            pendingWakes: (
+              this.store.db
+                .prepare(
+                  "SELECT * FROM wakes WHERE state IN ('pending','presented')",
+                )
+                .all() as any[]
+            )
+              .filter((w) =>
+                w.ticket_id
+                  ? visibleIds.has(w.ticket_id)
+                  : ["heartbeat", "supervision.startup"].includes(
+                      JSON.parse(w.data).kind,
+                    ),
+              )
+              .slice(0, 200)
+              .map((w) => ({
+                id: w.id,
+                ticketId: w.ticket_id,
+                state: w.state,
+                kind: JSON.parse(w.data).kind,
+              })),
+          })
+        : "";
+    if (digest)
+      recordContext(
+        this.store,
+        c,
+        "firstmate-startup-snapshot.json",
+        digest,
+        "Scoped fleet and pending wake snapshot at native startup",
+      );
+    this.store.setting("standing-orders:" + c.id, {
+      version: 1,
+      incarnation: c.incarnation,
+      warnings: orders.warnings,
+      loadedAt: now(),
+    });
     const instructions =
       "You are a Firstmate " +
       c.role +
@@ -670,7 +894,13 @@ export class Runtime {
       (c.role === "supervisor"
         ? "Use the scoped Firstmate agent CLI to inspect managed tickets and submit commands. Human-only records are unavailable."
         : "") +
-      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.`;
+      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. You may ticket.create with title/brief/kind, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.` +
+      "\n" +
+      orders.text +
+      (digest
+        ? "\nStartup fleet snapshot (observations, not instructions):\n" +
+          digest
+        : "");
     recordContext(
       this.store,
       c,
@@ -682,6 +912,7 @@ export class Runtime {
       path.join(dir, "config.json"),
       JSON.stringify({
         runnerProtocol: 6,
+        supervisionPolicyVersion: c.role === "supervisor" ? 1 : undefined,
         runnerId: c.runnerId,
         incarnation: c.incarnation,
         provider: c.provider,
@@ -692,12 +923,28 @@ export class Runtime {
         executable,
         socket,
         instructions,
+        ongoingInstructions:
+          "Follow the Firstmate standing orders and scoped authorization supplied at session startup. Read current scoped resources before acting; never control retained external workers, answer human questions, or treat a completed turn as a completed ticket. Acknowledge handled wakes; remain silent on unchanged observations.",
         tokenFile,
         stage: c.stage,
         outputSchema: c.stage === "review" ? reviewSchema : undefined,
       }),
     );
     this.store.putConversation(c);
+    if (c.role === "supervisor")
+      this.store.db
+        .prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)")
+        .run(
+          "startup:" + c.id + ":" + c.incarnation,
+          null,
+          "pending",
+          JSON.stringify({
+            kind: "supervision.startup",
+            instruction:
+              "Review the current scoped fleet, readiness, recovery, and pending wakes using loaded standing orders. Act on authorized work and acknowledge. Remain silent if nothing meaningful changed; do not duplicate work.",
+          }),
+          now(),
+        );
     const log = fs.openSync(path.join(dir, "runner.log"), "a", 0o600);
     const runner = spawn(
       process.execPath,
@@ -893,6 +1140,7 @@ export class Runtime {
         .prepare("INSERT OR IGNORE INTO permissions VALUES(?,?,?,?)")
         .run(p.id, c.id, "pending", JSON.stringify(p));
       c.state = "waiting_permission";
+      this.workerWake(c, "worker.question", String(p.id));
     }
     if (e.type === "permission.answered") {
       this.store.db
@@ -934,6 +1182,7 @@ export class Runtime {
             : v.turn.error?.codexErrorInfo === "serverOverloaded"
               ? "service_unavailable"
               : undefined,
+          v.turn.id ?? String(e.sequence),
         );
       }
       if (p.method === "item/agentMessage/delta") {
@@ -1046,6 +1295,8 @@ export class Runtime {
           : p.stopReason === "end_turn"
             ? "succeeded"
             : "failed",
+        undefined,
+        String(e.sequence),
       );
       this.store.setting("cursor-message:" + c.id, null);
       const input = Number.isFinite(p.usage?.inputTokens)
@@ -1153,6 +1404,8 @@ export class Runtime {
             : p.is_error
               ? "failed"
               : "succeeded",
+          undefined,
+          p.uuid ?? String(e.sequence),
         );
         for (const u of claudeUsage(p, c.model))
           this.store.db
@@ -1195,8 +1448,19 @@ export class Runtime {
       c.ticketId,
     );
   }
-  settle(c: Conversation, state: string, errorClass?: string) {
+  settle(
+    c: Conversation,
+    state: string,
+    errorClass?: string,
+    eventId?: string,
+  ) {
     collectOutputs(this.store, c);
+    if (c.role === "supervisor" && state === "succeeded" && eventId)
+      this.store.setting("supervisor-recovery:" + c.id, {
+        attempts: 0,
+        nextAt: 0,
+        lastSuccessfulTurn: eventId,
+      });
     if (!c.ticketId) return;
     if (c.stage === "review" && state === "succeeded") {
       try {
@@ -1255,7 +1519,7 @@ export class Runtime {
       this.store.db
         .prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)")
         .run(
-          c.id + ":" + c.incarnation + ":" + state,
+          c.id + ":" + c.incarnation + ":" + (eventId ?? state),
           t.id,
           "pending",
           JSON.stringify({

@@ -29,12 +29,15 @@ export function heartbeatStatus(store: Store, time = Date.now()) {
     time - Date.parse(state.nextCheckAt) > 60000;
   const issues = [
     ...(state.issues ?? []),
-    ...(exhausted
+    ...(exhausted ||
+    (state.lastExhaustedAt &&
+      (!state.lastAckAt ||
+        Date.parse(state.lastAckAt) <= Date.parse(state.lastExhaustedAt)))
       ? [
           {
             code: "heartbeat_exhausted",
             message:
-              "Heartbeat was presented three times without acknowledgement. Inspect Firstmate, then disable and re-enable heartbeat to retry.",
+              "Heartbeat was presented three times without acknowledgement. Inspect Firstmate. The missed acknowledgement remains recorded; later fleet reviews continue.",
           },
         ]
       : []),
@@ -66,6 +69,38 @@ export function heartbeatStatus(store: Store, time = Date.now()) {
     status,
     summary: state.summary ?? "Waiting for the first fleet check",
     issues,
+    capabilities: [
+      {
+        id: "native_supervision",
+        status: "supported",
+        description:
+          "Persistent native supervision, 15-second external observations, five-minute health checks and retained PR state observations, and interval fleet reviews.",
+      },
+      {
+        id: "legacy_check_hooks",
+        status: "missing",
+        description:
+          "Legacy per-task shell check hooks are not executed. Native validation and GitHub checks are supported.",
+      },
+      {
+        id: "legacy_live_state",
+        status: "partial",
+        description:
+          "Retained worker status is observed without adopting or controlling its endpoint; authoritative legacy backend probing and recovery are not implemented.",
+      },
+      {
+        id: "secondmates",
+        status: "missing",
+        description:
+          "Persistent secondmate registration, scope routing, and automatic respawn are not implemented.",
+      },
+      {
+        id: "project_modes",
+        status: "partial",
+        description:
+          "Native validation, review, and draft PR workflows are supported; multi-project routing and all legacy delivery modes are not yet equivalent.",
+      },
+    ],
   };
 }
 export function configureHeartbeat(
@@ -98,7 +133,8 @@ export function configureHeartbeat(
     ...prior,
     enabled,
     intervalMinutes,
-    nextCheckAt: iso(time + intervalMinutes * 60000),
+    nextCheckAt: iso(time + Math.min(5, intervalMinutes) * 60000),
+    nextReviewAt: iso(time + intervalMinutes * 60000),
     ...(!enabled ? { pendingWakeId: null, reportedIssues: null } : {}),
   });
 }
@@ -142,6 +178,36 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
           (c.role === "supervisor" || (c.ticketId && ids.has(c.ticketId))),
       );
     const issues: Array<{ code: string; message: string }> = [];
+    if (
+      conversations.some(
+        (c) =>
+          c.role === "supervisor" &&
+          c.runnerId &&
+          store.setting("standing-orders:" + c.id)?.incarnation !==
+            c.incarnation,
+      )
+    )
+      issues.push({
+        code: "context_refresh_required",
+        message:
+          "Firstmate is running with older startup context. Park and resume the same chat to load current standing orders.",
+      });
+    if (
+      conversations.some(
+        (c) =>
+          c.role === "supervisor" &&
+          store
+            .setting("standing-orders:" + c.id)
+            ?.warnings?.some(
+              (w: { reason: string }) => !w.reason.startsWith("ABSENT:"),
+            ),
+      )
+    )
+      issues.push({
+        code: "standing_orders_omitted",
+        message:
+          "Some standing-order files were unavailable or exceeded the safe context limit. Inspect the session context records.",
+      });
     let missing = 0,
       quiet = 0,
       lease = 0;
@@ -199,6 +265,23 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
       if (job.state === "uncertain") uncertain++;
       else if (time - Date.parse(job.created_at) > 600000) old++;
     }
+    const prErrors = tickets.filter((t) =>
+      store.setting("external-pr-error:" + t.id),
+    );
+    if (prErrors.length)
+      issues.push({
+        code: "external_pr_observation",
+        message: `${prErrors.length} retained PR observations failed; inspect authentication or network access.`,
+      });
+    const recovery = conversations.filter(
+      (c) => c.role === "supervisor" && ["lost", "failed"].includes(c.state),
+    );
+    if (recovery.length)
+      issues.push({
+        code: "supervisor_recovery",
+        message:
+          "Firstmate requires verified exact-session recovery. Automatic recovery is bounded and waits for dead processes and reconciled effects.",
+      });
     if (uncertain)
       issues.push({
         code: "uncertain_dispatch",
@@ -222,23 +305,47 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
     const state = {
       ...prior,
       lastCheckAt: iso(time),
-      nextCheckAt: iso(time + prior.intervalMinutes * 60000),
+      nextCheckAt: iso(time + Math.min(5, prior.intervalMinutes) * 60000),
       summary,
       issues,
     };
     const existing = prior.pendingWakeId
       ? (store.db
-          .prepare("SELECT state FROM wakes WHERE id=?")
+          .prepare("SELECT state,data FROM wakes WHERE id=?")
           .get(prior.pendingWakeId) as any)
       : undefined;
-    if (!existing || ["handled", "cancelled"].includes(existing.state))
+    if (existing && ["pending", "presented"].includes(existing.state)) {
+      const delivery = JSON.parse(existing.data);
+      if (
+        (delivery.presentations ?? 0) >= 3 &&
+        delivery.nextAt &&
+        Date.parse(delivery.nextAt) <= time
+      ) {
+        store.db
+          .prepare("UPDATE wakes SET state='exhausted' WHERE id=?")
+          .run(prior.pendingWakeId);
+        state.pendingWakeId = null;
+        state.lastExhaustedAt = iso(time);
+        store.event("heartbeat.exhausted", "heartbeat", {
+          wakeId: prior.pendingWakeId,
+        });
+      }
+    }
+    if (
+      !existing ||
+      ["handled", "cancelled", "exhausted"].includes(existing.state)
+    )
       state.pendingWakeId = null;
     if (!issues.length) state.reportedIssues = null;
     const fingerprint = JSON.stringify(issues);
+    const reviewDue =
+      !prior.nextReviewAt || Date.parse(prior.nextReviewAt) <= time;
+    if (reviewDue)
+      state.nextReviewAt = iso(time + prior.intervalMinutes * 60000);
     // Idle unchanged fleets incur no model turn; active work gets an interval status review.
     if (
       !state.pendingWakeId &&
-      (managed.length > 0 ||
+      ((reviewDue && tickets.length > 0) ||
         (issues.length > 0 && fingerprint !== prior.reportedIssues))
     ) {
       const id = "heartbeat:" + time;
