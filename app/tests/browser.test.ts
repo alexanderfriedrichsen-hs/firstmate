@@ -660,7 +660,18 @@ test(
         })
         .waitFor({ state: "hidden" });
       assert.equal(store.setting("policy").cursor.mode, "subscription_usage");
-      const heartbeatInterval = page.getByLabel("Check every (minutes)");
+      await page
+        .getByText("Supervision coverage and remaining gaps", { exact: true })
+        .click();
+      await page
+        .getByText(
+          "Legacy per-task shell check hooks are not executed. Native validation and GitHub checks are supported.",
+          { exact: false },
+        )
+        .waitFor();
+      const heartbeatInterval = page.getByLabel(
+        "Fleet review interval (minutes)",
+      );
       await heartbeatInterval.fill("121");
       assert.equal(
         await page

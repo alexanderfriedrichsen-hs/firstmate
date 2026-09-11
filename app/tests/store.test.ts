@@ -613,3 +613,138 @@ test("Claude tool interruption expires permission without reporting success or r
   assert.notEqual(s.ticket(t.id, user).status, "completed");
   s.db.close();
 });
+
+test("user backlog edits and reopen wake Firstmate once without self-wake loops", () => {
+  const s = fixture();
+  const t = create(s);
+  const mutate = (
+    id: string,
+    type: string,
+    payload: any = {},
+    actor: any = user,
+    commandId = randomUUID(),
+  ) =>
+    s.command(actor, {
+      commandId,
+      type,
+      targetId: id,
+      expectedVersion: s.ticket(id, actor).version,
+      payload,
+    });
+  const pending = () =>
+    (
+      s.db
+        .prepare("SELECT data FROM wakes WHERE state='pending'")
+        .all() as any[]
+    ).map((row) => JSON.parse(row.data));
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  const id = randomUUID();
+  const envelope = {
+    commandId: id,
+    type: "ticket.update",
+    targetId: t.id,
+    expectedVersion: t.version,
+    payload: { brief: "New actionable brief" },
+  };
+  s.command(user, envelope);
+  s.command(user, envelope);
+  assert.equal(pending().length, 1);
+  assert.equal(pending()[0].kind, "ticket.updated");
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  mutate(t.id, "ticket.update", { brief: "New actionable brief" });
+  mutate(t.id, "ticket.update", { priority: "high" }, agent);
+  assert.equal(pending().length, 0);
+  mutate(t.id, "ticket.complete");
+  mutate(t.id, "ticket.reopen");
+  assert.deepEqual(
+    pending().map((w) => w.kind),
+    ["ticket.reopened"],
+  );
+  const hidden = create(s, { handling: "human_only" });
+  mutate(hidden.id, "ticket.update", { brief: "Private details" });
+  const external = create(s);
+  s.setting("legacy:" + external.id, { management: "external" });
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  mutate(external.id, "ticket.update", { brief: "External changes" });
+  assert.equal(pending().length, 0);
+  s.db.close();
+});
+
+test("dependency wakes require accepted deliverables and all remaining prerequisites", () => {
+  const s = fixture();
+  const first = create(s, { kind: "investigation" });
+  const second = create(s, { kind: "investigation" });
+  const child = create(s);
+  const mutate = (
+    id: string,
+    type: string,
+    payload: any = {},
+    actor: any = user,
+  ) =>
+    s.command(actor, {
+      commandId: randomUUID(),
+      type,
+      targetId: id,
+      expectedVersion: s.ticket(id, actor).version,
+      payload,
+    });
+  const pending = () =>
+    (
+      s.db
+        .prepare("SELECT data FROM wakes WHERE state='pending'")
+        .all() as any[]
+    ).map((row) => JSON.parse(row.data));
+  mutate(child.id, "ticket.dependencies", { requires: [first.id, second.id] });
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  mutate(first.id, "ticket.complete");
+  assert.equal(
+    pending().length,
+    0,
+    "Manual completion is not an accepted deliverable",
+  );
+  mutate(first.id, "ticket.reopen");
+  mutate(
+    first.id,
+    "ticket.deliverReport",
+    { text: "A complete investigation report with evidence and findings." },
+    agent,
+  );
+  mutate(
+    first.id,
+    "ticket.claimComplete",
+    { rationale: "Report delivered and verified" },
+    agent,
+  );
+  assert.equal(pending().filter((w) => w.ticketId === child.id).length, 0);
+  mutate(
+    second.id,
+    "ticket.deliverReport",
+    { text: "A second complete report with evidence and findings." },
+    agent,
+  );
+  mutate(
+    second.id,
+    "ticket.claimComplete",
+    { rationale: "Report delivered and verified" },
+    agent,
+  );
+  assert.deepEqual(
+    pending()
+      .filter((w) => w.ticketId === child.id)
+      .map((w) => w.kind),
+    ["ticket.dependenciesReady"],
+  );
+  assert.equal(s.dependenciesSatisfied(child.id), true);
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  mutate(second.id, "ticket.update", { title: "Same completed report" });
+  assert.equal(pending().length, 0);
+  const blocker = create(s);
+  mutate(child.id, "ticket.dependencies", { requires: [blocker.id] });
+  s.db.prepare("UPDATE wakes SET state='handled'").run();
+  mutate(child.id, "ticket.dependencies", { requires: [] });
+  assert.deepEqual(
+    pending().map((w) => w.kind),
+    ["ticket.dependenciesReady"],
+  );
+  s.db.close();
+});

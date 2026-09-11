@@ -4,6 +4,13 @@ export type Heartbeat = {
   intervalMinutes: number;
   lastTickAt?: string;
   lastCheckAt?: string;
+  lastReviewAt?: string;
+  nextReviewAt?: string;
+  capabilities?: Array<{
+    id: string;
+    status: "missing" | "partial" | "supported";
+    description: string;
+  }>;
   nextCheckAt?: string;
   lastWakeAt?: string;
   lastAckAt?: string;
@@ -74,6 +81,12 @@ export function HeartbeatStatus({
             </dd>
           </div>
           <div>
+            <dt>Next fleet review</dt>
+            <dd>
+              {heartbeat.enabled ? time(heartbeat.nextReviewAt) : "Disabled"}
+            </dd>
+          </div>
+          <div>
             <dt>Last queued heartbeat</dt>
             <dd>{time(heartbeat.lastWakeAt)}</dd>
           </div>
@@ -82,6 +95,27 @@ export function HeartbeatStatus({
             <dd>{time(heartbeat.lastAckAt)}</dd>
           </div>
         </dl>
+      )}
+      {!!heartbeat.capabilities?.length && (
+        <details className="supervision-coverage">
+          <summary>Supervision coverage and remaining gaps</summary>
+          <ul>
+            {heartbeat.capabilities.map((capability) => (
+              <li key={capability.id}>
+                <strong>
+                  {
+                    {
+                      supported: "Supported",
+                      partial: "Partial",
+                      missing: "Unavailable",
+                    }[capability.status]
+                  }
+                </strong>
+                : {capability.description}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {heartbeat.issues?.length > 0 && (
         <div className="notice" role="status">
@@ -119,9 +153,9 @@ export function HeartbeatSettings({
     <section className="heartbeat-settings">
       <HeartbeatStatus heartbeat={heartbeat} />
       <p className="help">
-        Heartbeat checks your fleet on a schedule and wakes Firstmate when
-        needed. Automatic work respects dispatch pauses, manual mode, and
-        pending questions.
+        Heartbeat checks fleet health every five minutes and reviews active work
+        at your selected interval. Automatic work respects dispatch pauses,
+        manual mode, and pending questions.
       </p>
       <form
         onSubmit={async (e) => {
@@ -153,7 +187,7 @@ export function HeartbeatSettings({
           Enable heartbeat
         </label>
         <label>
-          Check every (minutes)
+          Fleet review interval (minutes)
           <input
             type="number"
             min="1"

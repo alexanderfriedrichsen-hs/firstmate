@@ -259,6 +259,45 @@ export class Store {
         "Adopt this queued task into the configured project; automatic work follows your dispatch and Firstmate control settings",
     };
   }
+  dependenciesSatisfied(ticketId: string) {
+    return (
+      this.db
+        .prepare("SELECT requires_id FROM dependencies WHERE ticket_id=?")
+        .all(ticketId) as any[]
+    ).every((edge) => {
+      const required = this.db
+        .prepare("SELECT data FROM tickets WHERE id=?")
+        .get(edge.requires_id) as any;
+      const closure = this.db
+        .prepare(
+          "SELECT data FROM closures WHERE ticket_id=? ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(edge.requires_id) as any;
+      return (
+        required &&
+        json(required.data).status === "completed" &&
+        closure &&
+        json(closure.data).source === "agent_detected"
+      );
+    });
+  }
+  queueTicketWake(ticket: Ticket, commandId: string, kind: string) {
+    if (
+      ticket.handling !== "agent_managed" ||
+      this.externallyManaged(ticket.id) ||
+      ["completed", "cancelled"].includes(ticket.status)
+    )
+      return;
+    this.db
+      .prepare("INSERT OR IGNORE INTO wakes VALUES(?,?,?,?,?)")
+      .run(
+        kind + ":" + commandId + ":" + ticket.id,
+        ticket.id,
+        "pending",
+        JSON.stringify({ kind, ticketId: ticket.id }),
+        now(),
+      );
+  }
   assertLeaseActive(conversationId: string) {
     if (
       this.setting("lease-retirement-intent:conversation:" + conversationId) ||
@@ -578,24 +617,8 @@ export class Store {
         this.assertManaged(t.id);
         if (t.handling === "human_only")
           throw new Conflict("Human only tickets cannot launch a conversation");
-        for (const edge of this.db
-          .prepare("SELECT requires_id FROM dependencies WHERE ticket_id=?")
-          .all(t.id) as any[]) {
-          const required = this.ticket(edge.requires_id, actor);
-          const closure = this.db
-            .prepare(
-              "SELECT data FROM closures WHERE ticket_id=? ORDER BY rowid DESC LIMIT 1",
-            )
-            .get(required.id) as any;
-          if (
-            required.status !== "completed" ||
-            !closure ||
-            json(closure.data).source !== "agent_detected"
-          )
-            throw new Conflict(
-              "A required accepted deliverable is not complete",
-            );
-        }
+        if (!this.dependenciesSatisfied(t.id))
+          throw new Conflict("A required accepted deliverable is not complete");
       }
       if (
         v.role === "supervisor" &&
@@ -882,6 +905,22 @@ export class Store {
       return { handled: true };
     }
     const t = this.ticket(c.targetId!, actor);
+    const beforeChange = JSON.stringify({
+      title: t.title,
+      brief: t.brief,
+      priority: t.priority,
+      links: t.links,
+      handling: t.handling,
+    });
+    const ownDependenciesWereSatisfied = this.dependenciesSatisfied(t.id);
+    const waitingDependents = (
+      this.db
+        .prepare("SELECT ticket_id FROM dependencies WHERE requires_id=?")
+        .all(t.id) as any[]
+    )
+      .filter((edge) => !this.dependenciesSatisfied(edge.ticket_id))
+      .map((edge) => edge.ticket_id);
+
     if (c.expectedVersion !== t.version)
       throw new Conflict("Ticket changed; refresh before retrying");
     if (
@@ -1311,6 +1350,35 @@ export class Store {
     t.version++;
     t.updatedAt = now();
     this.putTicket(t);
+    if (c.type === "ticket.reopen")
+      this.queueTicketWake(t, c.commandId, "ticket.reopened");
+    if (
+      c.type === "ticket.update" &&
+      actor.kind !== "supervisor" &&
+      actor.kind !== "collector" &&
+      beforeChange !==
+        JSON.stringify({
+          title: t.title,
+          brief: t.brief,
+          priority: t.priority,
+          links: t.links,
+          handling: t.handling,
+        })
+    )
+      this.queueTicketWake(t, c.commandId, "ticket.updated");
+    if (
+      c.type === "ticket.dependencies" &&
+      !ownDependenciesWereSatisfied &&
+      this.dependenciesSatisfied(t.id)
+    )
+      this.queueTicketWake(t, c.commandId, "ticket.dependenciesReady");
+    for (const id of waitingDependents)
+      if (this.dependenciesSatisfied(id))
+        this.queueTicketWake(
+          this.ticket(id, { kind: "user", id: "dependency-wake" }),
+          c.commandId,
+          "ticket.dependenciesReady",
+        );
     this.event("ticket.updated", t.id, t, t.id);
     return { ticketId: t.id, ticket: t };
   }
