@@ -155,6 +155,11 @@ Verify imported tickets and retained worker identities before enabling automatic
 Legacy workers remain externally managed; migration does not silently attach or restart them.
 Restart the legacy controller or watcher manually only after a successful rollback releases app ownership.
 
+Adoption applies only to a queued or backlog ticket still marked externally managed with agent-managed handling; the app rejects any other ticket outright.
+If the imported ticket names a specific repository, it must match the configured project's source or remote before adoption becomes eligible, so adoption checks a single configured project and multi-project routing remains partial.
+Conflicting legacy updates, non-descriptive legacy metadata, prior status history, holds, existing worker attempts, or an outstanding adoption conversation block adoption until you reconcile them.
+Adopting a ticket always requires your explicit **Adopt queued ticket** action in the ticket detail view; the app never automatically takes over a retained worker.
+
 `rollback --output /absolute/path/to/export-directory` exports current history without releasing ownership.
 To release ownership, pause dispatch, park app-native sessions, stop the runtime, and run `rollback --release-ownership --output /absolute/path/to/export-directory` against the transferred home.
 Review the report, then run `rollback --release-ownership --approve-report <id>` with the same home.
