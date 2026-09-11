@@ -887,11 +887,6 @@ export class Runtime {
       warnings: orders.warnings,
       loadedAt: now(),
     });
-    if (c.role === "supervisor" && this.store.setting("heartbeat"))
-      this.store.setting("heartbeat", {
-        ...this.store.setting("heartbeat"),
-        nextCheckAt: now(),
-      });
     const instructions =
       "You are a Firstmate " +
       c.role +
@@ -1113,6 +1108,15 @@ export class Runtime {
       c.providerId = p.providerId;
       if (p.model) c.model = p.model;
     }
+    if (
+      e.type === "runner.ready" &&
+      c.role === "supervisor" &&
+      this.store.setting("heartbeat")
+    )
+      this.store.setting("heartbeat", {
+        ...this.store.setting("heartbeat"),
+        nextCheckAt: now(),
+      });
     if (e.type === "runner.ready" || e.type === "runner.settled")
       c.state = "idle";
     if (e.type === "runner.failed" || e.type === "provider.exit")
