@@ -327,13 +327,19 @@ export function serve(
         });
       if (u.pathname === "/v1/wakes") {
         const wakes = store.db
-          .prepare("SELECT * FROM wakes WHERE state='pending'")
+          .prepare(
+            "SELECT * FROM wakes WHERE state IN ('pending','presented') ORDER BY created_at,id",
+          )
           .all() as any[];
         return send(
           200,
           wakes.filter((w) => {
             try {
-              return !w.ticket_id || !!store.ticket(w.ticket_id, actor);
+              if (!w.ticket_id)
+                return actor.kind === "user" || actor.kind === "supervisor";
+              if (actor.kind === "worker" && actor.ticketId !== w.ticket_id)
+                return false;
+              return !!store.ticket(w.ticket_id, actor);
             } catch {
               return false;
             }

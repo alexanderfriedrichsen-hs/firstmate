@@ -135,6 +135,91 @@ test("HTTP boundary separates operator and agent authorization and protects muta
       body: JSON.stringify(input),
     }).then((r) => r.json());
     assert.deepEqual(duplicate, created);
+    const ticketFor = (handling: string) =>
+      store.command(
+        { kind: "user", id: "fixture" },
+        {
+          commandId: randomUUID(),
+          type: "ticket.create",
+          payload: { title: "Wake boundary fixture", handling },
+        },
+      ).ticket;
+    const own = ticketFor("agent_managed");
+    const other = ticketFor("agent_managed");
+    const hidden = ticketFor("human_only");
+    store.db.prepare("DELETE FROM wakes").run();
+    for (const [id, ticketId, state] of [
+      ["global-pending", null, "pending"],
+      ["global-presented", null, "presented"],
+      ["own-pending", own.id, "pending"],
+      ["own-presented", own.id, "presented"],
+      ["other-presented", other.id, "presented"],
+      ["private-presented", hidden.id, "presented"],
+      ["handled", own.id, "handled"],
+      ["cancelled", own.id, "cancelled"],
+    ])
+      store.db
+        .prepare("INSERT INTO wakes VALUES(?,?,?,?,?)")
+        .run(
+          id,
+          ticketId,
+          state,
+          JSON.stringify({ kind: "fixture" }),
+          new Date().toISOString(),
+        );
+    store.setting("agentTokens", [
+      { token: "scoped-test-token", actor: agent },
+      {
+        token: "worker-test-token",
+        actor: { kind: "worker", id: "worker", ticketId: own.id },
+      },
+      {
+        token: "unscoped-worker-token",
+        actor: { kind: "worker", id: "worker-no-ticket" },
+      },
+    ]);
+    const wakeIds = async (headers: Record<string, string>) =>
+      (
+        await fetch(base + "/v1/wakes", { headers }).then((response) =>
+          response.json(),
+        )
+      )
+        .map((wake: any) => wake.id)
+        .sort();
+    assert.deepEqual(
+      await wakeIds({ cookie }),
+      [
+        "global-pending",
+        "global-presented",
+        "other-presented",
+        "own-pending",
+        "own-presented",
+        "private-presented",
+      ].sort(),
+    );
+    assert.deepEqual(
+      await wakeIds({ Authorization: "Bearer scoped-test-token" }),
+      [
+        "global-pending",
+        "global-presented",
+        "other-presented",
+        "own-pending",
+        "own-presented",
+      ].sort(),
+    );
+    assert.deepEqual(
+      await wakeIds({ Authorization: "Bearer worker-test-token" }),
+      ["own-pending", "own-presented"],
+    );
+    assert.deepEqual(
+      await wakeIds({ Authorization: "Bearer unscoped-worker-token" }),
+      [],
+    );
+    store.putTicket({ ...own, handling: "human_only" });
+    assert.deepEqual(
+      await wakeIds({ Authorization: "Bearer worker-test-token" }),
+      [],
+    );
   } finally {
     web.close();
     store.db.close();
