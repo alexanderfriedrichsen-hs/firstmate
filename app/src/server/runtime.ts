@@ -887,6 +887,11 @@ export class Runtime {
       warnings: orders.warnings,
       loadedAt: now(),
     });
+    if (c.role === "supervisor" && this.store.setting("heartbeat"))
+      this.store.setting("heartbeat", {
+        ...this.store.setting("heartbeat"),
+        nextCheckAt: now(),
+      });
     const instructions =
       "You are a Firstmate " +
       c.role +
