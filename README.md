@@ -63,6 +63,9 @@ The browser is a client of the durable runtime.
 Closing it does not cancel accepted work.
 The chat follows new output automatically until you scroll up to read earlier messages.
 Scroll back to the bottom or select **Jump to latest** to resume following.
+Assistant replies render as sanitized Markdown, including tables and links; unsafe HTML and remote images are not rendered inline.
+Routine tool activity - command executions, file changes, MCP tool calls, and web searches reported only as an audit reference - stays collapsed in the transcript by default; select **Show tool activity** to reveal it.
+Searching or opening a link to a specific message reveals matching activity regardless of the toggle, and every audit record and artifact remains available either way.
 
 To try the app, use Node.js 24.16 or later, an authenticated Codex CLI, Treehouse, and a non-live source clone.
 The app currently requires a POSIX environment with Unix sockets, `ps`, and `lsof`; native Windows is not supported.
