@@ -166,9 +166,9 @@ Read the scoped `projects` resource and set `projectId` on ticket creation or up
 An unambiguous GitHub PR reference can resolve an existing ticket's project; otherwise, multiple available projects require explicit selection.
 An unknown or no-longer-available `projectId`, or one that contradicts the ticket's repository hint or linked PR, is rejected until you correct the association.
 Worker, review, repair, and check leases stay bound to that project.
-Initial worker allocation uses a bounded asynchronous wait.
-If allocation fails before a native session starts, Firstmate reconciles the original launch up to three times, checks for surviving allocator processes and exact lease ownership, and preserves queued input.
-Use `conversation.reconcileLaunch` or the conversation recovery action after correcting a remaining blocker; launches with native identities require their existing resume workflow.
+Initial worker allocation uses a bounded asynchronous wait of up to 180 seconds.
+If allocation fails before a native session starts, Firstmate reconciles the original launch up to three times, one minute apart, checks for surviving allocator processes and exact lease ownership, and preserves queued input.
+Use `conversation.reconcileLaunch` or the conversation's **Recover launch** button after correcting a remaining blocker; launches with native identities require their existing resume workflow.
 Native validate, review, and CI checks currently run only for the configured `default` project or a Joinera remote; other registered projects cannot launch checks yet.
 To correct an old ticket's repository, park and settle its workers, update `projectId`, and create a new worker; old chats keep their original workspace and history.
 Tickets with frozen revisions cannot change projects.
