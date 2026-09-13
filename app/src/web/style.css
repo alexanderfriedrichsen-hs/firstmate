@@ -1358,3 +1358,9 @@ select:focus-visible {
   font-size: 13px;
   margin-top: 8px;
 }
+
+.activity-toggle {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}

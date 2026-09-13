@@ -14,6 +14,7 @@ import { usePanelWidth } from "./panels.ts";
 import { ProviderSettings } from "./providers.tsx";
 import { UserQuestions } from "./questions.tsx";
 import { Markdown } from "./markdown.tsx";
+import { isRoutineActivity } from "./activity.ts";
 import {
   HeartbeatSettings,
   useHeartbeatHealth,
@@ -1067,6 +1068,7 @@ function Chat({
   };
   const [chatError, setChatError] = useState("");
   const [search, setSearch] = useState("");
+  const [showActivity, setShowActivity] = useState(false);
   const [older, setOlder] = useState<any[]>([]);
   useEffect(() => {
     const followLink = () => {
@@ -1080,6 +1082,13 @@ function Chat({
       )
         .then((d) => {
           setOlder(d.messages);
+          if (
+            d.messages.some(
+              (message: any) =>
+                message.id === mid && isRoutineActivity(message),
+            )
+          )
+            setShowActivity(true);
           requestAnimationFrame(() =>
             requestAnimationFrame(() =>
               document.getElementById(mid)?.scrollIntoView({ block: "center" }),
@@ -1244,6 +1253,7 @@ function Chat({
   const messages = [...older, ...(data?.messages ?? [])].filter(
     (m: any, i: number, a: any[]) => a.findIndex((x) => x.id === m.id) === i,
   );
+  const routineActivityCount = messages.filter(isRoutineActivity).length;
   return (
     <section className="chat">
       <header className="chat-header">
@@ -1337,6 +1347,16 @@ function Chat({
               : "Manual: waits for your messages. Automatic work in this chat is paused; other workers can continue."}
         </small>
       </div>
+      {routineActivityCount > 0 && (
+        <button
+          className="activity-toggle"
+          aria-pressed={showActivity}
+          onClick={() => setShowActivity(!showActivity)}
+        >
+          {showActivity ? "Hide" : "Show"} tool activity ({routineActivityCount}
+          )
+        </button>
+      )}
       <div
         ref={read.ref}
         className="transcript"
@@ -1364,6 +1384,9 @@ function Chat({
             </div>
           )}
           {messages
+            .filter(
+              (m: any) => showActivity || !!search || !isRoutineActivity(m),
+            )
             .filter(
               (m: any) =>
                 !search ||

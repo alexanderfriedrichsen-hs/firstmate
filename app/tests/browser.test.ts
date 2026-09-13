@@ -66,6 +66,37 @@ test(
       ].join("\n\n"),
       "message",
     );
+    const routineIds = [randomUUID(), randomUUID(), randomUUID()];
+    const activityArtifact = store.artifact(
+      undefined,
+      "commandExecution.json",
+      JSON.stringify({
+        type: "commandExecution",
+        command: "fixture status",
+        status: "completed",
+      }),
+      "application/json",
+      cid,
+    );
+    for (const id of routineIds)
+      store.message(
+        cid,
+        id,
+        "tool",
+        JSON.stringify({
+          label: "commandExecution",
+          artifactId: activityArtifact,
+        }),
+        "activity",
+      );
+    const visibleToolId = randomUUID();
+    store.message(
+      cid,
+      visibleToolId,
+      "tool",
+      "Visible tool error fixture",
+      "activity",
+    );
     const heartbeatId = randomUUID();
     store.message(
       cid,
@@ -101,6 +132,50 @@ test(
       await page
         .getByRole("heading", { name: "Firstmate", exact: true })
         .waitFor();
+      assert.equal(
+        await page
+          .locator(".transcript")
+          .getByText("commandExecution", { exact: true })
+          .count(),
+        0,
+      );
+      await page.locator(`[data-message-id="${visibleToolId}"]`).waitFor();
+      await page
+        .getByRole("button", { name: "Show tool activity (3)", exact: true })
+        .click();
+      assert.equal(
+        await page
+          .locator(".transcript")
+          .getByText("commandExecution", { exact: true })
+          .count(),
+        3,
+      );
+      await page
+        .locator(`[data-message-id="${routineIds[0]}"] summary`)
+        .click();
+      await page
+        .locator(`[data-message-id="${routineIds[0]}"]`)
+        .getByRole("link", { name: "Open activity artifact ↗", exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "Hide tool activity (3)", exact: true })
+        .click();
+      assert.equal(
+        await page
+          .locator(".transcript")
+          .getByText("commandExecution", { exact: true })
+          .count(),
+        0,
+      );
+      await page.getByLabel("Search transcript").fill("commandExecution");
+      assert.equal(
+        await page
+          .locator(".transcript")
+          .getByText("commandExecution", { exact: true })
+          .count(),
+        3,
+      );
+      await page.getByLabel("Search transcript").fill("");
       const heartbeat = page.locator(`[data-message-id="${heartbeatId}"]`);
       assert.equal(
         await heartbeat.locator("details").getAttribute("open"),
