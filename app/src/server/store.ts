@@ -366,6 +366,13 @@ export class Store {
         now(),
       );
   }
+  hasFailedInitialLaunch(conversationId: string) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.launch' AND (state='uncertain' OR (state='dispatching' AND generation<>?))",
+      )
+      .get(conversationId, this.generation);
+  }
   assertLeaseActive(conversationId: string) {
     if (
       this.setting("lease-retirement-intent:conversation:" + conversationId) ||
@@ -949,13 +956,7 @@ export class Store {
         if (actor.kind !== "user" && actor.kind !== "supervisor")
           throw new Denied("Resource not found");
         assertUnlaunched(conv);
-        if (
-          !this.db
-            .prepare(
-              "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.launch' AND (state='uncertain' OR (state='dispatching' AND generation<>?))",
-            )
-            .get(conv.id, this.generation)
-        )
+        if (!this.hasFailedInitialLaunch(conv.id))
           throw new Conflict(
             "Initial launch has not failed or is still dispatching",
           );

@@ -192,7 +192,7 @@ export class Runtime {
           )
             await this.launch(c!);
           else if (job.kind === "conversation.reconcileLaunch")
-            reconcileLaunch(this.store, c!);
+            await reconcileLaunch(this.store, c!);
           else if (c) {
             const p = JSON.parse(job.payload);
             p.model = c.model;
@@ -597,11 +597,7 @@ export class Runtime {
         attempts: 0,
         nextAt: 0,
       };
-      const failed = this.store.db
-        .prepare(
-          "SELECT id FROM outbox WHERE target_id=? AND kind='conversation.launch' AND state='uncertain'",
-        )
-        .get(c.id);
+      const failed = this.store.hasFailedInitialLaunch(c.id);
       const queued = this.store.db
         .prepare(
           "SELECT id FROM outbox WHERE target_id=? AND kind='conversation.reconcileLaunch' AND state IN ('pending','dispatching')",
@@ -797,7 +793,7 @@ export class Runtime {
         const source = project.source;
         const recordedLease = this.store.setting("lease:" + c.id);
         if (recordedLease) {
-          const current = inspectLaunchLeases(source).find(
+          const current = (await inspectLaunchLeases(source)).find(
             (entry: any) => entry.path === recordedLease.path,
           );
           if (
@@ -880,7 +876,6 @@ export class Runtime {
               : ["switch", "-c", "firstmate/repair-" + c.id, revision.head],
           );
         }
-        this.store.setting("lease:" + c.id, { ...allocation, remote, source });
       }
     }
     c.incarnation++;

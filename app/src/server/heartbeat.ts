@@ -210,13 +210,7 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
       });
     if (
       conversations.some(
-        (c) =>
-          c.state === "planned" &&
-          store.db
-            .prepare(
-              "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.launch' AND state='uncertain'",
-            )
-            .get(c.id),
+        (c) => c.state === "planned" && store.hasFailedInitialLaunch(c.id),
       )
     )
       issues.push({
