@@ -1,3 +1,4 @@
+import { assertUnlaunched } from "./launch-recovery.ts";
 import { projects, ticketProject, assertProjectScope } from "./projects.ts";
 import { mcpAnswer } from "./elicitation.ts";
 import {
@@ -943,6 +944,29 @@ export class Store {
         if (conv.state !== "idle")
           throw new Conflict("Settle the active turn before parking");
         conv.inputOwner = actor.id;
+        this.outbox(c, c.type, conv.id, {});
+      } else if (c.type === "conversation.reconcileLaunch") {
+        if (actor.kind !== "user" && actor.kind !== "supervisor")
+          throw new Denied("Resource not found");
+        assertUnlaunched(conv);
+        if (
+          !this.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.launch' AND (state='uncertain' OR (state='dispatching' AND generation<>?))",
+            )
+            .get(conv.id, this.generation)
+        )
+          throw new Conflict(
+            "Initial launch has not failed or is still dispatching",
+          );
+        if (
+          this.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.reconcileLaunch' AND state IN ('pending','dispatching')",
+            )
+            .get(conv.id)
+        )
+          throw new Conflict("Launch reconciliation already queued");
         this.outbox(c, c.type, conv.id, {});
       } else if (c.type === "conversation.resume") {
         user();

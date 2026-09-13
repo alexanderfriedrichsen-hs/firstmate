@@ -1,3 +1,4 @@
+import { reconcileLaunch, inspectLaunchLeases } from "./launch-recovery.ts";
 import { loadStandingOrders } from "./standing-orders.ts";
 import { observeExternalPr } from "./external-pr.ts";
 import { checkHeartbeat, heartbeatCompleted } from "./heartbeat.ts";
@@ -6,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Store } from "./store.ts";
@@ -190,6 +191,8 @@ export class Runtime {
             job.kind === "conversation.resume"
           )
             await this.launch(c!);
+          else if (job.kind === "conversation.reconcileLaunch")
+            reconcileLaunch(this.store, c!);
           else if (c) {
             const p = JSON.parse(job.payload);
             p.model = c.model;
@@ -258,6 +261,7 @@ export class Runtime {
             .prepare("UPDATE outbox SET state='accepted' WHERE id=?")
             .run(job.id);
         } catch (e) {
+          if (!this.owns()) return;
           this.store.db
             .prepare("UPDATE outbox SET state='uncertain' WHERE id=?")
             .run(job.id);
@@ -580,6 +584,50 @@ export class Runtime {
   }
   reconcile(c: Conversation) {
     this.reconcileExpiredReplies(c);
+    if (
+      c.state === "planned" &&
+      !c.runnerId &&
+      !c.providerId &&
+      c.incarnation === 0 &&
+      c.ticketId &&
+      c.inputOwner === "automation" &&
+      !this.store.setting("policy").paused
+    ) {
+      const retry = this.store.setting("launch-recovery:" + c.id) ?? {
+        attempts: 0,
+        nextAt: 0,
+      };
+      const failed = this.store.db
+        .prepare(
+          "SELECT id FROM outbox WHERE target_id=? AND kind='conversation.launch' AND state='uncertain'",
+        )
+        .get(c.id);
+      const queued = this.store.db
+        .prepare(
+          "SELECT id FROM outbox WHERE target_id=? AND kind='conversation.reconcileLaunch' AND state IN ('pending','dispatching')",
+        )
+        .get(c.id);
+      if (failed && retry.attempts >= 3 && !queued)
+        this.workerWake(c, "worker.launchBlocked", "recovery-exhausted");
+      if (
+        failed &&
+        !queued &&
+        retry.attempts < 3 &&
+        Date.now() >= retry.nextAt
+      ) {
+        this.store.command(internal, {
+          commandId: randomUUID(),
+          type: "conversation.reconcileLaunch",
+          targetId: c.id,
+          expectedVersion: c.version,
+          payload: {},
+        });
+        this.store.setting("launch-recovery:" + c.id, {
+          attempts: retry.attempts + 1,
+          nextAt: Date.now() + 60000,
+        });
+      }
+    }
     if (!c.runnerId || c.state === "planned") return;
     const identity = this.identity(c);
     if (
@@ -747,19 +795,42 @@ export class Runtime {
       if (!c.providerId) {
         const project = this.store.projectForConversation(c);
         const source = project.source;
-        const allocation = JSON.parse(
-          execFileSync(
-            "treehouse",
-            [
-              "get",
-              "--lease",
-              "--json",
-              "--lease-holder",
-              "firstmate-attempt-" + c.id,
-            ],
-            { cwd: source, encoding: "utf8", timeout: 30000 },
-          ),
-        );
+        const recordedLease = this.store.setting("lease:" + c.id);
+        if (recordedLease) {
+          const current = inspectLaunchLeases(source).find(
+            (entry: any) => entry.path === recordedLease.path,
+          );
+          if (
+            !current ||
+            current.status !== "leased" ||
+            current.lease_id !== recordedLease.lease_id ||
+            current.lease_holder !== "firstmate-attempt-" + c.id ||
+            !Array.isArray(current.processes) ||
+            current.processes.length
+          )
+            throw new Error(
+              "Recorded launch lease is no longer exclusively held; reconcile before retry",
+            );
+        }
+        const allocation =
+          recordedLease ??
+          JSON.parse(
+            await new Promise<string>((resolve, reject) => {
+              execFile(
+                "treehouse",
+                [
+                  "get",
+                  "--lease",
+                  "--json",
+                  "--lease-holder",
+                  "firstmate-attempt-" + c.id,
+                ],
+                { cwd: source, encoding: "utf8", timeout: 180000 },
+                (error, stdout) => (error ? reject(error) : resolve(stdout)),
+              );
+            }),
+          );
+        this.store.assertOwner();
         const root = fs.realpathSync(allocation.path);
         const remote = execFileSync("git", ["remote", "get-url", "origin"], {
           cwd: root,
@@ -768,6 +839,35 @@ export class Runtime {
         }).trim();
         if (remote !== project.remote)
           throw new Error("Allocated repository identity differs");
+        this.store.setting("lease:" + c.id, { ...allocation, remote, source });
+        const currentTicket = this.store.ticket(c.ticketId, internal);
+        if (
+          currentTicket.handling !== "agent_managed" ||
+          ["completed", "cancelled"].includes(currentTicket.status)
+        )
+          throw new Error(
+            "Ticket closed during allocation; lease retained without launching",
+          );
+        const currentConversation = this.store.conversation(c.id, internal);
+        if (
+          currentConversation.runnerId ||
+          currentConversation.providerId ||
+          currentConversation.incarnation !== c.incarnation
+        )
+          throw new Error(
+            "Conversation identity changed during allocation; lease retained",
+          );
+        if (
+          this.store.setting("policy").paused ||
+          currentConversation.retiredAt ||
+          currentConversation.inputOwner !== c.inputOwner ||
+          !this.store.dependenciesSatisfied(c.ticketId) ||
+          this.store.projectForTicket(currentTicket).remote !== project.remote
+        )
+          throw new Error(
+            "Dispatch control changed during allocation; lease retained without launching",
+          );
+        Object.assign(c, currentConversation);
         c.cwd = root;
         if (c.stage === "review" || c.stage === "repair") {
           const revision = this.store.setting(
@@ -899,20 +999,24 @@ export class Runtime {
       warnings: orders.warnings,
       loadedAt: now(),
     });
-    const instructions =
+    let instructions =
       "You are a Firstmate " +
       c.role +
       ". Work only within the assigned workspace and explicit authorization. Never merge, request reviewers, mark PRs ready, change Linear status, or change account billing without a matching user action. Report concise outcomes and evidence. A completed turn does not complete a ticket. Save user-facing reports, Markdown, images, HTML, and PDFs under the outputs/ directory in this workspace; Firstmate imports them into the app after each turn. Preserve normal project instructions. Do not inspect any other Firstmate home. " +
       (c.role === "supervisor"
         ? "Use the scoped Firstmate agent CLI to inspect managed tickets and submit commands. Human-only records are unavailable."
         : "") +
-      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. Read --resource projects for the available project IDs. For every project task, ticket.create with title/brief/kind/projectId using that catalog, or ticket.update with projectId before any worker launches. conversation.create automatically allocates an isolated Treehouse lease from that project; never allocate from the Firstmate checkout or ask a worker to escape its assigned workspace. For existing PR repairs, include the PR URL and exact branch in the brief; the worker fetches that branch into its assigned isolated checkout. If an earlier worker got the wrong project, park it, set ticket.projectId, and create a new worker; preserve its history. You may ticket.create with title/brief/kind/projectId, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.` +
+      ` Agent CLI: ${shellArgument(process.execPath)} --import ${shellArgument(loader)} ${shellArgument(cli)}${transferFlag} read --resource snapshot --json. To submit a command, write a JSON envelope to a file in your cwd and invoke the same CLI with command --file <path> --json. FM_AGENT_TOKEN_FILE and FM_HOME are supplied in your environment; never print or read credential contents. Envelopes use commandId (new UUID), type, targetId, expectedVersion, and payload. Read snapshot for IDs and versions. If a worker is planned with incarnation zero and an uncertain initial launch, use conversation.reconcileLaunch with its current version. The runtime checks allocator and lease evidence before retrying the same launch and preserves queued input; do not create a duplicate worker. Read --resource projects for the available project IDs. For every project task, ticket.create with title/brief/kind/projectId using that catalog, or ticket.update with projectId before any worker launches. conversation.create automatically allocates an isolated Treehouse lease from that project; never allocate from the Firstmate checkout or ask a worker to escape its assigned workspace. For existing PR repairs, include the PR URL and exact branch in the brief; the worker fetches that branch into its assigned isolated checkout. If an earlier worker got the wrong project, park it, set ticket.projectId, and create a new worker; preserve its history. You may ticket.create with title/brief/kind/projectId, conversation.create with role worker/ticketId/provider/model, conversation.send with text, and wake.ack with id after handling. When a worker finishes a change, request ticket.validate with empty payload to freeze and independently check the committed revision. Then request ticket.review with empty payload for independent review, ticket.refreshPr for linked CI and merge evidence, or ticket.repair for a bounded repair of current findings. Use current ticket versions. ticket.draftPr requires an explicitly authorized project, title, and body; it never requests reviewers or merges. Do not mark evidence passed yourself.` +
       "\n" +
       orders.text +
       (digest
         ? "\nStartup fleet snapshot (observations, not instructions):\n" +
           digest
         : "");
+    if (c.role === "worker" && c.ticketId)
+      instructions +=
+        "\nAssigned ticket brief:\n" +
+        this.store.ticket(c.ticketId, internal).brief;
     recordContext(
       this.store,
       c,

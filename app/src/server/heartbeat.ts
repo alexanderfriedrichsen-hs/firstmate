@@ -208,6 +208,22 @@ export function checkHeartbeat(store: Store, time = Date.now()) {
         message:
           "Some standing-order files were unavailable or exceeded the safe context limit. Inspect the session context records.",
       });
+    if (
+      conversations.some(
+        (c) =>
+          c.state === "planned" &&
+          store.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE target_id=? AND kind='conversation.launch' AND state='uncertain'",
+            )
+            .get(c.id),
+      )
+    )
+      issues.push({
+        code: "initial_launch_failed",
+        message:
+          "A worker has not started after a failed allocation. Bounded launch reconciliation checks the original lease and preserves queued input; use Recover launch if automatic recovery stops.",
+      });
     let missing = 0,
       quiet = 0,
       lease = 0;

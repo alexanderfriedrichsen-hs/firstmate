@@ -183,6 +183,26 @@ test("runtime allocates in selected project and rejects a mismatched Treehouse l
       }
       return (original as any)(file, args, options);
     }) as any);
+    t.mock.method(childProcess, "execFile", ((
+      file: string,
+      args: string[],
+      options: any,
+      callback: any,
+    ) => {
+      if (file !== "treehouse") throw new Error("Unexpected async command");
+      calls.push({ args, cwd: options.cwd });
+      callback(
+        null,
+        JSON.stringify({
+          path: wrong ? f.firstmate : f.joinera,
+          lease_id: "lease",
+          lease_holder: "holder",
+        }),
+        "",
+      );
+      return {};
+    }) as any);
+
     t.mock.method(childProcess, "spawn", (() => ({ unref() {} })) as any);
     syncBuiltinESMExports();
     const ticket = f.command("ticket.create", {
@@ -196,6 +216,7 @@ test("runtime allocates in selected project and rejects a mismatched Treehouse l
         provider: "codex",
         model: "test",
       }).conversation;
+    f.store.setting("policy", { ...f.store.setting("policy"), paused: false });
     const c = create();
     await new Runtime(f.store).launch(c);
     assert.equal(calls[0].cwd, f.joinera);
@@ -206,6 +227,61 @@ test("runtime allocates in selected project and rejects a mismatched Treehouse l
       new Runtime(f.store).launch(create()),
       /Allocated repository identity differs/,
     );
+    for (const change of ["pause", "takeover", "send"]) {
+      let respond: any;
+      t.mock.method(childProcess, "execFile", ((
+        _file: any,
+        _args: any,
+        _options: any,
+        callback: any,
+      ) => {
+        respond = callback;
+        return {};
+      }) as any);
+      syncBuiltinESMExports();
+      const delayed = create();
+      const pending = new Runtime(f.store).launch(delayed);
+      if (change === "pause")
+        f.store.setting("policy", {
+          ...f.store.setting("policy"),
+          paused: true,
+        });
+      else
+        f.command(
+          change === "takeover" ? "conversation.takeover" : "conversation.send",
+          change === "send" ? { text: "Supplement" } : {},
+          delayed,
+        );
+      const version = f.store.conversation(delayed.id, actor).version;
+      respond(
+        null,
+        JSON.stringify({
+          path: f.joinera,
+          lease_id: "late",
+          lease_holder: "firstmate-attempt-" + delayed.id,
+        }),
+        "",
+      );
+      if (change === "send") {
+        await pending;
+        assert.equal(
+          f.store.conversation(delayed.id, actor).version,
+          version + 1,
+        );
+      } else {
+        await assert.rejects(pending, /control changed/);
+        assert.equal(f.store.conversation(delayed.id, actor).version, version);
+        assert.equal(
+          f.store.conversation(delayed.id, actor).runnerId,
+          undefined,
+        );
+      }
+      assert.equal(f.store.setting("lease:" + delayed.id).lease_id, "late");
+      f.store.setting("policy", {
+        ...f.store.setting("policy"),
+        paused: false,
+      });
+    }
   } finally {
     t.mock.restoreAll();
     syncBuiltinESMExports();

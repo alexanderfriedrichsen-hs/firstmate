@@ -1284,6 +1284,21 @@ function Chat({
             </select>
           )}
           {!c.retiredAt && <ConversationControls conversation={c} act={act} />}
+          {!c.retiredAt &&
+            c.ticketId &&
+            c.state === "planned" &&
+            c.incarnation === 0 &&
+            !c.runnerId &&
+            !c.providerId && (
+              <button
+                title="Check the failed initial allocation before retrying the same worker. Queued messages are preserved."
+                onClick={() =>
+                  act("conversation.reconcileLaunch", {}, c.id, c.version)
+                }
+              >
+                Recover launch
+              </button>
+            )}
           {!c.retiredAt && ["lost", "failed"].includes(c.state) && (
             <button
               onClick={() => act("conversation.resume", {}, c.id, c.version)}
