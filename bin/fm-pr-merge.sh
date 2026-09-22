@@ -117,25 +117,28 @@ if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
 
+MERGE_STDOUT=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge.stdout.XXXXXX")
 MERGE_STDERR=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge.stderr.XXXXXX")
 # shellcheck disable=SC2329  # Invoked by the EXIT trap.
 cleanup() {
+  rm -f "$MERGE_STDOUT"
   rm -f "$MERGE_STDERR"
 }
 trap cleanup EXIT
 
 set +e
-gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@" 2> "$MERGE_STDERR"
+gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@" > "$MERGE_STDOUT" 2> "$MERGE_STDERR"
 merge_rc=$?
 set -e
 
+cat "$MERGE_STDOUT"
 cat "$MERGE_STDERR" >&2
 
 if [ "$merge_rc" -eq 0 ]; then
   exit 0
 fi
 
-if merge_queue_signature "$MERGE_STDERR"; then
+if merge_queue_signature "$MERGE_STDOUT" || merge_queue_signature "$MERGE_STDERR"; then
   enqueue_merge_queue
   exit $?
 fi

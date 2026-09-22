@@ -17,6 +17,7 @@
 #   (i) merge-queue strategy errors fall back to enqueuePullRequest
 #   (j) merge-queue auto-merge errors fall back to enqueuePullRequest
 #   (k) enqueuePullRequest failures propagate non-zero
+#   (l) merge-queue errors printed only to stdout still enqueue the PR
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -106,7 +107,7 @@ SH
 }
 
 add_gh_mocks_merge_queue() {
-  local case_dir=$1 merge_error=$2 enqueue_rc=${3:-0}
+  local case_dir=$1 merge_error=$2 enqueue_rc=${3:-0} merge_error_stream=${4:-stderr}
   cat > "$case_dir/fakebin/gh-axi" <<SH
 #!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
@@ -120,7 +121,15 @@ case "\${1:-} \${2:-}" in
 esac
 printf '%s\n' "\$*" >> "\$FM_TEST_GH_AXI_LOG"
 case "\${1:-} \${2:-}" in
-  "pr merge") printf '%s\n' "$merge_error" >&2 ; exit 1 ;;
+  "pr merge")
+    if [ "$merge_error_stream" = stdout ]; then
+      printf '%s\n' "$merge_error"
+      printf '%s\n' 'code: UNKNOWN'
+    else
+      printf '%s\n' "$merge_error" >&2
+    fi
+    exit 1
+    ;;
 esac
 exit 0
 SH
@@ -412,6 +421,32 @@ test_queue_fallback_on_auto_merge_error() {
   pass "fm-pr-merge falls back to the GitHub merge queue on auto-merge errors"
 }
 
+test_queue_fallback_on_stdout_only_strategy_error() {
+  local case_dir rc
+  case_dir=$(make_case queue-stdout-strategy-error)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks_merge_queue "$case_dir" '! The merge strategy for main is set by the merge queue' 0 stdout
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/34 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-stdout-strategy-error: fm-pr-merge should enqueue the PR"
+  assert_grep '! The merge strategy for main is set by the merge queue' "$case_dir/stdout" \
+    "queue-stdout-strategy-error: original merge error was not preserved on stdout"
+  assert_grep 'code: UNKNOWN' "$case_dir/stdout" \
+    "queue-stdout-strategy-error: original merge output was not preserved on stdout"
+  assert_grep 'enqueuePullRequest' "$case_dir/gh.log" \
+    "queue-stdout-strategy-error: stdout-only error did not enqueue the PR"
+  assert_grep 'enqueued in merge queue: position=3 state=QUEUED estimatedTimeToMerge=2026-07-14T20:00:00Z' "$case_dir/stdout" \
+    "queue-stdout-strategy-error: queue result was not printed"
+  pass "fm-pr-merge falls back when gh-axi prints merge-queue errors only to stdout"
+}
+
 test_enqueue_failure_propagates() {
   local case_dir rc
   case_dir=$(make_case enqueue-fails)
@@ -460,5 +495,6 @@ test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_queue_fallback_on_strategy_error
 test_queue_fallback_on_auto_merge_error
+test_queue_fallback_on_stdout_only_strategy_error
 test_enqueue_failure_propagates
 test_parses_pr_url_for_gh_axi
