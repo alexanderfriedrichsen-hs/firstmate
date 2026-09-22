@@ -26,10 +26,14 @@
 #
 # Merge queue fallback: GitHub rejects `gh-axi pr merge` on merge-queue-protected
 # default branches with either "The merge strategy for <branch> is set by the
-# merge queue" or "Auto merge is not allowed for this repository".
-# When either signature appears, this script resolves the PR node id with
-# `gh api graphql`, enqueues it with `enqueuePullRequest`, and prints the queue
-# position, state, and estimatedTimeToMerge returned by GitHub.
+# merge queue" or "Auto merge is not allowed for this repository". gh-axi does
+# not guarantee which stream carries these errors, so this script captures
+# both stdout and stderr, replays each unchanged to the caller's matching
+# stream, and checks both captures for either signature.
+# When either signature appears on either stream, this script resolves the PR
+# node id with `gh api graphql`, enqueues it with `enqueuePullRequest`, and
+# prints the queue position, state, and estimatedTimeToMerge returned by
+# GitHub.
 # These two GraphQL calls deliberately use plain `gh` instead of gh-axi:
 # gh-axi's `api` command is REST-path-only (no graphql subcommand, no GraphQL
 # variable flags, no --jq), so it cannot express this mutation.
