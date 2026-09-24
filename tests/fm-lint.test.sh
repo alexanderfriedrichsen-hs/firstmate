@@ -21,8 +21,11 @@ LINT="$ROOT/bin/fm-lint.sh"
 CI="$ROOT/.github/workflows/ci.yml"
 NM="$ROOT/.no-mistakes.yaml"
 INSTALLER="$ROOT/bin/fm-install-shellcheck.sh"
-# The authoritative file set the one owner must run.
-CANON='shellcheck --norc bin/*.sh bin/backends/*.sh tests/*.sh'
+# The authoritative file set the one owner must run. Invoked through
+# $SHELLCHECK_BIN (not a literal "shellcheck") so a repo-local pinned install
+# can stand in when PATH has none.
+# shellcheck disable=SC2016  # single quotes are deliberate: this is the literal text to grep for in fm-lint.sh, not an expression to expand here.
+CANON='"$SHELLCHECK_BIN" --norc bin/*.sh bin/backends/*.sh tests/*.sh'
 # The pinned version, read from the single source (the one owner itself).
 REQUIRED=$("$LINT" --required-version)
 
@@ -45,7 +48,8 @@ test_owner_defines_canonical_set() {
   # that would hide findings CI fails on.
   assert_no_grep '--severity' "$LINT" "fm-lint.sh must not lower severity below the CI default"
   assert_no_grep '--exclude' "$LINT" "fm-lint.sh must not blanket-exclude checks CI enforces"
-  [ "$(grep -Fc 'exec shellcheck --norc' "$LINT")" -eq 2 ] || fail "both lint modes must ignore ambient ShellCheck configuration"
+  # shellcheck disable=SC2016  # single quotes are deliberate: this is the literal text to grep for in fm-lint.sh, not an expression to expand here.
+  [ "$(grep -Fc 'exec "$SHELLCHECK_BIN" --norc' "$LINT")" -eq 2 ] || fail "both lint modes must ignore ambient ShellCheck configuration"
   pass "fm-lint.sh is the sole authoritative definition at CI-default severity"
 }
 

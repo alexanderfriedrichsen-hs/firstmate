@@ -26,10 +26,14 @@
 #
 # Merge queue fallback: GitHub rejects `gh-axi pr merge` on merge-queue-protected
 # default branches with either "The merge strategy for <branch> is set by the
-# merge queue" or "Auto merge is not allowed for this repository".
-# When either signature appears, this script resolves the PR node id with
-# `gh api graphql`, enqueues it with `enqueuePullRequest`, and prints the queue
-# position, state, and estimatedTimeToMerge returned by GitHub.
+# merge queue" or "Auto merge is not allowed for this repository". gh-axi does
+# not guarantee which stream carries these errors, so this script captures
+# both stdout and stderr, replays each unchanged to the caller's matching
+# stream, and checks both captures for either signature.
+# When either signature appears on either stream, this script resolves the PR
+# node id with `gh api graphql`, enqueues it with `enqueuePullRequest`, and
+# prints the queue position, state, and estimatedTimeToMerge returned by
+# GitHub.
 # These two GraphQL calls deliberately use plain `gh` instead of gh-axi:
 # gh-axi's `api` command is REST-path-only (no graphql subcommand, no GraphQL
 # variable flags, no --jq), so it cannot express this mutation.
@@ -117,25 +121,28 @@ if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
 
+MERGE_STDOUT=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge.stdout.XXXXXX")
 MERGE_STDERR=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge.stderr.XXXXXX")
 # shellcheck disable=SC2329  # Invoked by the EXIT trap.
 cleanup() {
+  rm -f "$MERGE_STDOUT"
   rm -f "$MERGE_STDERR"
 }
 trap cleanup EXIT
 
 set +e
-gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@" 2> "$MERGE_STDERR"
+gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@" > "$MERGE_STDOUT" 2> "$MERGE_STDERR"
 merge_rc=$?
 set -e
 
+cat "$MERGE_STDOUT"
 cat "$MERGE_STDERR" >&2
 
 if [ "$merge_rc" -eq 0 ]; then
   exit 0
 fi
 
-if merge_queue_signature "$MERGE_STDERR"; then
+if merge_queue_signature "$MERGE_STDOUT" || merge_queue_signature "$MERGE_STDERR"; then
   enqueue_merge_queue
   exit $?
 fi
